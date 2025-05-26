@@ -342,7 +342,7 @@ def turing_test():
 
     if st.session_state.initial_eval_turing is None:
         choice = st.radio("Which is ground truth?", ["A","B","Not sure"], key=f"ch_t_{case}", index=2)
-        if st.button("Submit Initial"):
+        if st.button("Submit Initial Evaluation"):
             st.session_state.initial_eval_turing = choice
             st.session_state.viewed_images_turing = True
             st.success("Recorded initial eval.")
