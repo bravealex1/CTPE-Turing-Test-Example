@@ -1,0 +1,4 @@
+case_id,last_case,assignments,initial_eval,final_eval,viewed_images
+123,0,{'123': True},B,B,True
+456,1,"{'123': True, '456': True}",Not sure,Not sure,True
+789,2,"{'123': True, '456': True, '789': True}",Not sure,Not sure,True

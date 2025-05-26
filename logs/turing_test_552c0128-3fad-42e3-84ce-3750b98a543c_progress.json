@@ -1,0 +1,35 @@
+[
+  {
+    "case_id": "123",
+    "last_case": 0,
+    "assignments": {
+      "123": true
+    },
+    "initial_eval": "B",
+    "final_eval": "B",
+    "viewed_images": true
+  },
+  {
+    "case_id": "456",
+    "last_case": 1,
+    "assignments": {
+      "123": true,
+      "456": true
+    },
+    "initial_eval": "Not sure",
+    "final_eval": "Not sure",
+    "viewed_images": true
+  },
+  {
+    "case_id": "789",
+    "last_case": 2,
+    "assignments": {
+      "123": true,
+      "456": true,
+      "789": true
+    },
+    "initial_eval": "Not sure",
+    "final_eval": "Not sure",
+    "viewed_images": true
+  }
+]
