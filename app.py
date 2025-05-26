@@ -309,34 +309,11 @@ def index():
         st.experimental_set_query_params(page="view_results"); st.session_state.page="view_results"; st.rerun()
 
 def turing_test():
-    # Initialize shuffled order + balanced assignments on first run
-    if "cases_turing_order" not in st.session_state:
-        # 1) Shuffle the order of cases
-        st.session_state.cases_turing_order = cases.copy()
-        random.shuffle(st.session_state.cases_turing_order)  # in-place shuffle :contentReference[oaicite:3]{index=3}
+    # initialize index
+    idx = st.session_state.get("last_case_turing", 0)
 
-        # 2) Build a balanced list of True/False assignments
-        n = len(st.session_state.cases_turing_order)
-        true_count = n // 2
-        false_count = n - true_count
-        bools = [True] * true_count + [False] * false_count
-        random.shuffle(bools)  # mix up which cases get True/False :contentReference[oaicite:4]{index=4}
-
-        # Map each (shuffled) case to its boolean assignment
-        st.session_state.assignments_turing = dict(
-            zip(st.session_state.cases_turing_order, bools)
-        )
-
-        # Initialize progress trackers
-        st.session_state.last_case_turing    = 0
-        st.session_state.initial_eval_turing = None
-        st.session_state.viewed_images_turing = False
-
-    total = len(st.session_state.cases_turing_order)
-    idx = st.session_state.last_case_turing
-
-    # Completion screen
-    if idx >= total:
+    # all done?
+    if idx >= total_cases:
         st.success("Turing Test complete!")
         if st.button("Home"):
             st.session_state.page = "index"
@@ -344,22 +321,29 @@ def turing_test():
             st.rerun()
         return
 
-    # Pick the next case ID from our shuffled list
-    case = st.session_state.cases_turing_order[idx]
-    st.header(f"Turing Test: {case} ({idx+1}/{total})")
+    # ── INITIALIZE RANDOM A/B ASSIGNMENTS ──
+    if "assignments_turing" not in st.session_state:
+        # one random flip per case
+        flags = [random.choice([True, False]) for _ in cases]
+        st.session_state.assignments_turing = dict(zip(cases, flags))
 
+    assigns = st.session_state.assignments_turing
+    case = cases[idx]
+
+    # header & back button
+    st.header(f"Turing Test: {case} ({idx+1}/{total_cases})")
     if st.button("Save & Back"):
         st.session_state.page = "index"
         st.experimental_set_query_params(page="index")
         st.rerun()
 
-    # ── load from CSV or fallback to files ──
-    reports    = report_dict.get(case, {})
-    gt_report  = reports.get("gt",  load_text(os.path.join(BASE_IMAGE_DIR, case, "text.txt")))
-    gen_report = reports.get("gen", load_text(os.path.join(BASE_IMAGE_DIR, case, "pred.txt")))
+    # ── LOAD REPORT TEXT ──
+    reports = report_dict.get(case, {})
+    gt_report  = reports.get("gt",  load_text(os.path.join("images", case, "text.txt")))
+    gen_report = reports.get("gen", load_text(os.path.join("images", case, "pred.txt")))
 
-    # ── apply our balanced assignment :contentReference[oaicite:5]{index=5} ──
-    if st.session_state.assignments_turing[case]:
+    # ── ASSIGN A vs B ──
+    if assigns[case]:
         A, B = gt_report, gen_report
     else:
         A, B = gen_report, gt_report
@@ -369,8 +353,8 @@ def turing_test():
     st.subheader("Report B")
     st.text_area("B", B, height=200, key=f"B_t_{case}")
 
-    # ── initial evaluation ──
-    if st.session_state.initial_eval_turing is None:
+    # ── INITIAL EVAL ──
+    if st.session_state.get("initial_eval_turing") is None:
         choice = st.radio(
             "Which is ground truth?",
             ["A", "B", "Not sure"],
@@ -383,8 +367,8 @@ def turing_test():
             st.success("Recorded initial eval.")
             st.rerun()
 
-    # ── show images and final evaluation ──
-    if st.session_state.viewed_images_turing:
+    # ── SHOW IMAGES & FINAL EVAL ──
+    if st.session_state.get("viewed_images_turing", False):
         st.markdown("#### Images")
         display_carousel("turing", case)
 
@@ -411,9 +395,10 @@ def turing_test():
             }
             save_progress("turing_test", prog)
 
-            # advance to next case
-            st.session_state.last_case_turing    += 1
+            # advance
+            st.session_state.last_case_turing    = idx + 1
             st.session_state.initial_eval_turing  = None
+            st.session_state.final_eval_turing    = None
             st.session_state.viewed_images_turing = False
             st.rerun()
 
