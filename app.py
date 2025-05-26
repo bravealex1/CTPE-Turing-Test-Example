@@ -321,13 +321,13 @@ def turing_test():
             st.rerun()
         return
 
-    # ── INITIALIZE RANDOM A/B ASSIGNMENTS ──
-    if "assignments_turing" not in st.session_state:
-        # one random flip per case
-        flags = [random.choice([True, False]) for _ in cases]
-        st.session_state.assignments_turing = dict(zip(cases, flags))
+    # ── ENSURE RANDOM A/B ASSIGNMENTS PER CASE ──
+    assigns = st.session_state.get("assignments_turing", {})
+    for cid in cases:
+        if cid not in assigns:
+            assigns[cid] = random.choice([True, False])
+    st.session_state.assignments_turing = assigns
 
-    assigns = st.session_state.assignments_turing
     case = cases[idx]
 
     # header & back button
@@ -339,8 +339,8 @@ def turing_test():
 
     # ── LOAD REPORT TEXT ──
     reports = report_dict.get(case, {})
-    gt_report  = reports.get("gt",  load_text(os.path.join("images", case, "text.txt")))
-    gen_report = reports.get("gen", load_text(os.path.join("images", case, "pred.txt")))
+    gt_report  = reports.get("gt",  load_text(os.path.join(BASE_IMAGE_DIR, case, "text.txt")))
+    gen_report = reports.get("gen", load_text(os.path.join(BASE_IMAGE_DIR, case, "pred.txt")))
 
     # ── ASSIGN A vs B ──
     if assigns[case]:
