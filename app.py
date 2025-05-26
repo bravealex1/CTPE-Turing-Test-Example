@@ -309,8 +309,34 @@ def index():
         st.experimental_set_query_params(page="view_results"); st.session_state.page="view_results"; st.rerun()
 
 def turing_test():
+    # Initialize shuffled order + balanced assignments on first run
+    if "cases_turing_order" not in st.session_state:
+        # 1) Shuffle the order of cases
+        st.session_state.cases_turing_order = cases.copy()
+        random.shuffle(st.session_state.cases_turing_order)  # in-place shuffle :contentReference[oaicite:3]{index=3}
+
+        # 2) Build a balanced list of True/False assignments
+        n = len(st.session_state.cases_turing_order)
+        true_count = n // 2
+        false_count = n - true_count
+        bools = [True] * true_count + [False] * false_count
+        random.shuffle(bools)  # mix up which cases get True/False :contentReference[oaicite:4]{index=4}
+
+        # Map each (shuffled) case to its boolean assignment
+        st.session_state.assignments_turing = dict(
+            zip(st.session_state.cases_turing_order, bools)
+        )
+
+        # Initialize progress trackers
+        st.session_state.last_case_turing    = 0
+        st.session_state.initial_eval_turing = None
+        st.session_state.viewed_images_turing = False
+
+    total = len(st.session_state.cases_turing_order)
     idx = st.session_state.last_case_turing
-    if idx >= total_cases:
+
+    # Completion screen
+    if idx >= total:
         st.success("Turing Test complete!")
         if st.button("Home"):
             st.session_state.page = "index"
@@ -318,26 +344,22 @@ def turing_test():
             st.rerun()
         return
 
-    case = cases[idx]
-    st.header(f"Turing Test: {case} ({idx+1}/{total_cases})")
+    # Pick the next case ID from our shuffled list
+    case = st.session_state.cases_turing_order[idx]
+    st.header(f"Turing Test: {case} ({idx+1}/{total})")
 
     if st.button("Save & Back"):
         st.session_state.page = "index"
         st.experimental_set_query_params(page="index")
         st.rerun()
 
-    # ── load from CSV, fallback to files ──
+    # ── load from CSV or fallback to files ──
     reports    = report_dict.get(case, {})
     gt_report  = reports.get("gt",  load_text(os.path.join(BASE_IMAGE_DIR, case, "text.txt")))
     gen_report = reports.get("gen", load_text(os.path.join(BASE_IMAGE_DIR, case, "pred.txt")))
 
-    # ── randomly assign A vs B (True ⇒ A=ground truth, B=generated) ──
-    assigns = st.session_state.assignments_turing
-    if case not in assigns:
-        assigns[case] = random.choice([True, False])
-        st.session_state.assignments_turing = assigns
-
-    if assigns[case]:
+    # ── apply our balanced assignment :contentReference[oaicite:5]{index=5} ──
+    if st.session_state.assignments_turing[case]:
         A, B = gt_report, gen_report
     else:
         A, B = gen_report, gt_report
@@ -380,20 +402,18 @@ def turing_test():
 
         if st.button("Finalize & Next"):
             prog = {
-                "case_id":         case,
-                "last_case":       idx,
-                "assignments":     st.session_state.assignments_turing,
-                "initial_eval":    st.session_state.initial_eval_turing,
-                "final_eval":      st.session_state.final_eval_turing,
-                "viewed_images":   st.session_state.viewed_images_turing
+                "case_id":       case,
+                "last_case":     idx,
+                "assignments":   st.session_state.assignments_turing,
+                "initial_eval":  st.session_state.initial_eval_turing,
+                "final_eval":    st.session_state.final_eval_turing,
+                "viewed_images": st.session_state.viewed_images_turing
             }
             save_progress("turing_test", prog)
 
             # advance to next case
             st.session_state.last_case_turing    += 1
-            st.session_state.current_slice_turing = 0
             st.session_state.initial_eval_turing  = None
-            st.session_state.final_eval_turing    = None
             st.session_state.viewed_images_turing = False
             st.rerun()
 
