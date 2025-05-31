@@ -8,90 +8,41 @@ import pandas as pd
 import sqlite3
 from datetime import datetime
 
+import yaml
+from yaml.loader import SafeLoader
+
 import streamlit_authenticator as stauth
 from streamlit_authenticator.utilities.hasher import Hasher
 
 # --------------------------------------------------
-# 0. Inline Credentials Setup (10 Users)
+# 0. Load credentials + cookie settings from YAML
 # --------------------------------------------------
-# We define ten users here; each user has:
-# - username (key in the 'usernames' dict)
-# - email
-# - name  (full name for display)
-# - password (plaintext; will be hashed)
-credentials = {
-    "usernames": {
-        "tester1": {
-            "email": "tester1@example.com",
-            "name": "Tester One",
-            "password": "Password1!"
-        },
-        "tester2": {
-            "email": "tester2@example.com",
-            "name": "Tester Two",
-            "password": "Password2!"
-        },
-        "tester3": {
-            "email": "tester3@example.com",
-            "name": "Tester Three",
-            "password": "Password3!"
-        },
-        "tester4": {
-            "email": "tester4@example.com",
-            "name": "Tester Four",
-            "password": "Password4!"
-        },
-        "tester5": {
-            "email": "tester5@example.com",
-            "name": "Tester Five",
-            "password": "Password5!"
-        },
-        "tester6": {
-            "email": "tester6@example.com",
-            "name": "Tester Six",
-            "password": "Password6!"
-        },
-        "tester7": {
-            "email": "tester7@example.com",
-            "name": "Tester Seven",
-            "password": "Password7!"
-        },
-        "tester8": {
-            "email": "tester8@example.com",
-            "name": "Tester Eight",
-            "password": "Password8!"
-        },
-        "tester9": {
-            "email": "tester9@example.com",
-            "name": "Tester Nine",
-            "password": "Password9!"
-        },
-        "tester10": {
-            "email": "tester10@example.com",
-            "name": "Tester Ten",
-            "password": "Password10!"
-        }
-    }
-}
+# Load the YAML file
+with open("config.yaml", "r", encoding="utf-8") as file:
+    config = yaml.load(file, Loader=SafeLoader)
+
+# Extract credentials (this must match 'credentials → usernames' in YAML)
+credentials = config.get("credentials", {})
+if "usernames" not in credentials:
+    st.error("⚠️ 'usernames' key not found under 'credentials' in config.yaml")
+    st.stop()
 
 # Hash all plaintext passwords in-place so that the authenticator
-# expects and stores only bcrypt hashes.
+# only works with bcrypt hashed values.
 credentials["usernames"] = Hasher.hash_passwords(credentials["usernames"])
 
 # --------------------------------------------------
-# 1. Authentication Setup (must be first)
+# 1. Authentication Setup (must be first in the script)
 # --------------------------------------------------
-# We set up Streamlit-Authenticator to handle login, logout, and cookie-based sessions.
 authenticator = stauth.Authenticate(
     credentials        = credentials["usernames"],
-    cookie_name        = "survey_app_cookie",
-    key                = "survey_app_key",
-    cookie_expiry_days = 180,
-    preauthorized      = []  # No preauthorized users
+    cookie_name        = config["cookie"]["name"],
+    key                = config["cookie"]["key"],
+    cookie_expiry_days = config["cookie"]["expiry_days"],
+    preauthorized      = config.get("preauthorized", {}).get("emails", [])
 )
 
 # Render the login form in the sidebar.
-# Users will see a prompt to enter username/password.
 authenticator.login(location="sidebar", key="login")
 
 # Retrieve authentication results from Streamlit's session state.
@@ -99,7 +50,7 @@ name                  = st.session_state.get("name")
 authentication_status = st.session_state.get("authentication_status")
 username              = st.session_state.get("username")
 
-# If not authenticated, show appropriate messages and stop the script.
+# If not authenticated, show messages and stop the script.
 if not authentication_status:
     if authentication_status is False:
         st.sidebar.error("❌ Username/password is incorrect")
@@ -107,8 +58,7 @@ if not authentication_status:
         st.sidebar.warning("⚠️ Please enter your username and password")
     st.stop()
 
-# If authenticated, show a logout button in the sidebar.
-# When clicked, the user is immediately logged out and returned to the login form.
+# If authenticated, show a logout button and a welcome message.
 if authentication_status:
     authenticator.logout("Logout", "sidebar", key="logout")
     st.sidebar.write(f"Welcome, *{name}*")
