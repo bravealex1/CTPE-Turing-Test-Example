@@ -1,32 +1,50 @@
 # config.yaml
 
-# --------------------------------------------------
-# 1. User Credentials
-# --------------------------------------------------
 credentials:
-  # Must be exactly "usernames" here
   usernames:
-    test1:
-      name: test1
-      # Plain-text for now; will be hashed at runtime
-      password: abc
-    test2:
-      name: test2
-      password: abc
-    # Add more users as needed:
-    # charlie:
-    #   name: Charlie Jones
-    #   email: charlie@example.com
-    #   password: charliepassword
-
-# --------------------------------------------------
-# 2. Cookie Settings
-# --------------------------------------------------
+    tester1:
+      email: tester1@example.com
+      name: Tester One
+      password: Password1!
+    tester2:
+      email: tester2@example.com
+      name: Tester Two
+      password: Password2!
+    tester3:
+      email: tester3@example.com
+      name: Tester Three
+      password: Password3!
+    tester4:
+      email: tester4@example.com
+      name: Tester Four
+      password: Password4!
+    tester5:
+      email: tester5@example.com
+      name: Tester Five
+      password: Password5!
+    tester6:
+      email: tester6@example.com
+      name: Tester Six
+      password: Password6!
+    tester7:
+      email: tester7@example.com
+      name: Tester Seven
+      password: Password7!
+    tester8:
+      email: tester8@example.com
+      name: Tester Eight
+      password: Password8!
+    tester9:
+      email: tester9@example.com
+      name: Tester Nine
+      password: Password9!
+    tester10:
+      email: tester10@example.com
+      name: Tester Ten
+      password: Password10!
 cookie:
-  # Name of the cookie in the browser
   name: survey_app_cookie
-  # A secret key for signing the cookie (make this long & random!)
   key: your-very-secret-key-goes-here
-  # How many days the login persists
   expiry_days: 180
-
+preauthorized:
+  emails: []
