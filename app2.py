@@ -8,130 +8,84 @@ import pandas as pd
 import sqlite3
 from datetime import datetime
 
-import yaml
-from yaml.loader import SafeLoader
-
 import streamlit_authenticator as stauth
 from streamlit_authenticator.utilities.hasher import Hasher
 
 # --------------------------------------------------
-# 0. Load credentials + cookie settings from YAML
+# 0. INLINE CREDENTIALS SETUP (10 TEST USERS)
 # --------------------------------------------------
-CONFIG_PATH = "config.yaml"
-if not os.path.exists(CONFIG_PATH):
-    st.error(f"⚠️ Could not find '{CONFIG_PATH}'. Make sure this file is in the same directory as your Streamlit app.")
-    st.stop()
+#
+# We define 10 testers here with simple passwords. At runtime,
+# Hasher.hash_passwords() will bcrypt-hash them in memory.
+#
+# Structure: 
+# credentials = {
+#     "usernames": {
+#         "<login>": {
+#             "name": "<full_display_name>",
+#             "password": "<plain_text_password>"
+#         },
+#         ...
+#     }
+# }
 
-with open(CONFIG_PATH, "r", encoding="utf-8") as file:
-    try:
-        config = yaml.load(file, Loader=SafeLoader)
-    except yaml.YAMLError as e:
-        st.error(f"⚠️ Error parsing '{CONFIG_PATH}':\n{e}")
-        st.stop()
+credentials = {
+    "usernames": {
+        "tester1":   {"name": "Alice Anderson",   "password": "TestPass01!"},
+        "tester2":   {"name": "Bob Brown",        "password": "TestPass02!"},
+        "tester3":   {"name": "Carol Campbell",   "password": "TestPass03!"},
+        "tester4":   {"name": "David Davis",      "password": "TestPass04!"},
+        "tester5":   {"name": "Eve Edwards",      "password": "TestPass05!"},
+        "tester6":   {"name": "Frank Foster",     "password": "TestPass06!"},
+        "tester7":   {"name": "Grace Green",      "password": "TestPass07!"},
+        "tester8":   {"name": "Hank Harris",      "password": "TestPass08!"},
+        "tester9":   {"name": "Ivy Irving",       "password": "TestPass09!"},
+        "tester10":  {"name": "Jack Johnson",     "password": "TestPass10!"},
+    }
+}
 
-# --------------------------------------------------
-# 1. Extract credentials block
-# --------------------------------------------------
-credentials = config.get("credentials", {})
-if "usernames" not in credentials:
-    st.error("⚠️ 'usernames' key not found under 'credentials' in config.yaml")
-    st.stop()
+# Hash all plaintext passwords in-place so that the authenticator
+# only ever sees bcrypt-hashed credentials
+credentials["usernames"] = Hasher.hash_passwords(credentials["usernames"])
 
-user_dict = credentials["usernames"]
+# Cookie settings (you can tweak these if needed)
+cookie_name        = "survey_app_cookie"
+cookie_key         = "some_random_key_12345"   # Change to a real secret in production!
+cookie_expiry_days = 1
 
-# --------------------------------------------------
-# 2. Hash any plaintext passwords at runtime
-# --------------------------------------------------
-# Build three parallel lists: names, emails, and passwords (hash if needed)
-names_list = []
-emails_list = []
-passwords_list = []
-
-for username, user_info in user_dict.items():
-    # Expect user_info to have keys: 'email', 'name', 'password'
-    raw_pwd = user_info.get("password", "")
-    display_name = user_info.get("name", "")
-    email_addr = user_info.get("email", "")
-
-    # If the stored password does NOT look like a bcrypt hash (no leading '$2b$' or '$2a$'),
-    # then hash it now. Otherwise, take it as already‐hashed.
-    if raw_pwd.startswith("$2b$") or raw_pwd.startswith("$2a$"):
-        hashed_pwd = raw_pwd
-    else:
-        try:
-            # stauth.Hasher.hash_passwords can accept a dict mapping user→password,
-            # but here we'll hash one by one so we preserve order.
-            hashed_pwd = Hasher([raw_pwd]).generate()[0]
-        except Exception as e:
-            st.error(f"⚠️ Failed to hash password for user '{username}': {e}")
-            st.stop()
-
-    names_list.append(display_name)
-    emails_list.append(email_addr)
-    passwords_list.append(hashed_pwd)
-
-# --------------------------------------------------
-# 3. Pull in the rest of the YAML blocks: cookie & preauthorized
-# --------------------------------------------------
-cookie_config = config.get("cookie", {})
-preauth_config = config.get("preauthorized", {})
-
-cookie_name      = cookie_config.get("name", "streamlit_auth_cookie")
-cookie_key       = cookie_config.get("key", "changeme‐safe‐key‐please")
-cookie_expiry    = cookie_config.get("expiry_days", 30)
-preauth_emails   = preauth_config.get("emails", [])
-
-# --------------------------------------------------
-# 4. Instantiate Streamlit‐Authenticator
-# --------------------------------------------------
+# Instantiate the authenticator
 authenticator = stauth.Authenticate(
-    names_list,
-    emails_list,
-    passwords_list,
-    cookie_name=cookie_name,
-    key=cookie_key,
-    cookie_expiry_days=cookie_expiry,
-    preauthorized=preauth_emails,
+    credentials        = credentials,
+    cookie_name        = cookie_name,
+    key                = cookie_key,
+    cookie_expiry_days = cookie_expiry_days,
+    preauthorized      = []
 )
 
-# --------------------------------------------------
-# 5. Call the login widget
-# --------------------------------------------------
-name, authentication_status, username = authenticator.login("Login", "main")
+# Render the login form in the sidebar
+authenticator.login(location="sidebar", key="login")
 
-if authentication_status is False:
-    st.error("⚠️ Username/password is incorrect")
-elif authentication_status is None:
-    st.warning("ℹ️ Please enter your username and password")
-elif authentication_status:
-    st.success(f"✅ Welcome *{name}*")
+name                  = st.session_state.get("name")
+authentication_status = st.session_state.get("authentication_status")
+username              = st.session_state.get("username")
 
-    # You can now proceed with the rest of your app,
-    # for example: st.write("Protected content goes here...")
-    authenticator.logout("Logout", "sidebar")
+# If not logged in, show warnings or errors and stop
+if not authentication_status:
+    if authentication_status is False:
+        st.sidebar.error("❌ Username/password is incorrect")
+    else:
+        st.sidebar.warning("⚠️ Please enter your username and password")
+    st.stop()
 
-# --------------------------------------------------
-# 2. Load Reports from CSV (Normal & Abnormal)
-# --------------------------------------------------
-NORMAL_CSV = r"normal_top_15.csv"
-ABNORMAL_CSV = r"abnormal_top_15.csv"
-
-if os.path.exists(NORMAL_CSV) and os.path.exists(ABNORMAL_CSV):
-    df_normal = pd.read_csv(NORMAL_CSV)
-    df_abnormal = pd.read_csv(ABNORMAL_CSV)
-    df_reports = pd.concat([df_normal, df_abnormal], ignore_index=True)
-    report_dict = {
-        str(row["id"]): {
-            "gt": row["gt"],
-            "gen": row["generated_output"]
-        }
-        for _, row in df_reports.iterrows()
-    }
-else:
-    report_dict = {}  # fallback if CSVs are missing
+# ------------------------------
+# LOGOUT BUTTON (in sidebar)
+# ------------------------------
+if st.sidebar.button("Logout"):
+    authenticator.logout("sidebar", key="logout")
+    st.experimental_rerun()
 
 # --------------------------------------------------
-# 3. Database Setup for Queryable Logs
+# 1. Database Setup for Queryable Logs
 # --------------------------------------------------
 DB_DIR  = "logs"
 DB_PATH = os.path.join(DB_DIR, "logs.db")
@@ -164,9 +118,12 @@ def init_db():
 init_db()
 
 # --------------------------------------------------
-# 4. Helper: Prevent Duplicate SQLite Inserts
+# 2. Helper: Prevent Duplicate SQLite Inserts
 # --------------------------------------------------
 def should_log(session_id: str, category: str, new_progress: dict) -> bool:
+    """
+    Only log if the last saved 'last_case' or 'case_id' differs.
+    """
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
@@ -180,6 +137,7 @@ def should_log(session_id: str, category: str, new_progress: dict) -> bool:
     if not row:
         return True
     last = json.loads(row[0])
+    # Compare based on keys used in each workflow
     if "last_case" in new_progress:
         return last.get("last_case") != new_progress.get("last_case")
     if category == "ai_edit" and "case_id" in new_progress:
@@ -187,25 +145,29 @@ def should_log(session_id: str, category: str, new_progress: dict) -> bool:
     return True
 
 # --------------------------------------------------
-# 5. Generate & Store Unique Session ID
+# 3. Generate & Store Unique Session ID
 # --------------------------------------------------
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
 # --------------------------------------------------
-# 6. Sidebar: Display Session ID
+# 4. Sidebar: Display Session ID and Username
 # --------------------------------------------------
+st.sidebar.markdown(f"**Logged in as:** {name}  ")
 st.sidebar.markdown(f"**Session ID:** `{st.session_state.session_id}`")
+st.sidebar.markdown("---")
 
 # --------------------------------------------------
-# 7. Utility: Save Progress per Category & Session
+# 5. Utility: Save Progress per Category & Session
 # --------------------------------------------------
 def save_progress(category: str, progress: dict):
     sid = st.session_state.session_id
     if not should_log(sid, category, progress):
         return
+
     os.makedirs(DB_DIR, exist_ok=True)
-    # JSON
+
+    # 1) Save JSON file (for easy reloading or debugging)
     jpath = os.path.join(DB_DIR, f"{category}_{sid}_progress.json")
     if os.path.exists(jpath):
         with open(jpath, "r", encoding="utf-8") as f:
@@ -216,14 +178,16 @@ def save_progress(category: str, progress: dict):
     data.append(progress)
     with open(jpath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
-    # CSV
+
+    # 2) Append to CSV (for quick tabular view)
     cpath = os.path.join(DB_DIR, f"{category}_{sid}_progress.csv")
     df = pd.DataFrame([progress])
     if os.path.exists(cpath):
         df.to_csv(cpath, index=False, mode="a", header=False)
     else:
         df.to_csv(cpath, index=False)
-    # SQLite
+
+    # 3) Insert into SQLite
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
@@ -234,7 +198,7 @@ def save_progress(category: str, progress: dict):
     conn.close()
 
 # --------------------------------------------------
-# 8. Utility: Save Annotations per Case
+# 6. Utility: Save Annotations per Case
 # --------------------------------------------------
 def save_annotations(case_id: str, annotations: list):
     os.makedirs("evaluations", exist_ok=True)
@@ -248,6 +212,7 @@ def save_annotations(case_id: str, annotations: list):
     data.extend(annotations)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
@@ -258,7 +223,7 @@ def save_annotations(case_id: str, annotations: list):
     conn.close()
 
 # --------------------------------------------------
-# 9. Initialize per-workflow Session State
+# 7. Initialize per-workflow Session State
 # --------------------------------------------------
 def init_state(key, default):
     if key not in st.session_state:
@@ -285,7 +250,7 @@ init_state("corrections_ai",  [])
 init_state("assembled_ai",    "")
 
 # --------------------------------------------------
-# 10. Routing Setup & Data Directories
+# 8. Routing Setup
 # --------------------------------------------------
 params = st.experimental_get_query_params()
 if "page" in params:
@@ -293,22 +258,25 @@ if "page" in params:
 elif "page" not in st.session_state:
     st.session_state.page = "index"
 
+# ── ADAPTED: point to the folders containing normal & abnormal cases ──
 NORMAL_IMAGE_DIR   = r"sampled_normal"
 ABNORMAL_IMAGE_DIR = r"sampled_abnormal"
 
+# Get list of case IDs from both directories
 cases_normal   = sorted([d for d in os.listdir(NORMAL_IMAGE_DIR)   if os.path.isdir(os.path.join(NORMAL_IMAGE_DIR, d))])
 cases_abnormal = sorted([d for d in os.listdir(ABNORMAL_IMAGE_DIR) if os.path.isdir(os.path.join(ABNORMAL_IMAGE_DIR, d))])
 cases = sorted(cases_normal + cases_abnormal)
 total_cases = len(cases)
 
 # --------------------------------------------------
-# 11. Helpers for Text & Carousel
+# 9. Helpers for Loading Text & Displaying Carousel
 # --------------------------------------------------
 def load_text(path):
     return open(path, "r", encoding="utf-8").read() if os.path.exists(path) else ""
 
 def display_carousel(category, case_id):
     key = f"current_slice_{category}"
+    # Determine which base folder this case lives in
     if case_id in cases_normal:
         base_dir = NORMAL_IMAGE_DIR
     else:
@@ -323,11 +291,13 @@ def display_carousel(category, case_id):
         for f in os.listdir(bone_folder)
         if f.lower().endswith((".png", ".jpg", ".jpeg"))
     ]) if os.path.exists(bone_folder) else []
+
     lung_imgs = sorted([
         os.path.join(lung_folder, f)
         for f in os.listdir(lung_folder)
         if f.lower().endswith((".png", ".jpg", ".jpeg"))
     ]) if os.path.exists(lung_folder) else []
+
     soft_imgs = sorted([
         os.path.join(soft_folder, f)
         for f in os.listdir(soft_folder)
@@ -358,25 +328,49 @@ def display_carousel(category, case_id):
         if soft_imgs:
             st.image(soft_imgs[idx], caption="Soft Tissue", use_column_width=True)
         else:
-            st.info("No soft‐tissue images.")
+            st.info("No soft-tissue images.")
     with c_next:
         if st.button("Next ⟩", key=f"next_{category}_{case_id}") and idx < max_slices - 1:
             st.session_state[key] = idx + 1
             st.rerun()
 
 # --------------------------------------------------
-# 12. Page Definitions
+# 10. Load Reports from CSV (Normal & Abnormal)
 # --------------------------------------------------
+NORMAL_CSV = r"normal_top_15.csv"
+ABNORMAL_CSV = r"abnormal_top_15.csv"
+
+if os.path.exists(NORMAL_CSV) and os.path.exists(ABNORMAL_CSV):
+    df_normal = pd.read_csv(NORMAL_CSV)
+    df_abnormal = pd.read_csv(ABNORMAL_CSV)
+    df_reports = pd.concat([df_normal, df_abnormal], ignore_index=True)
+    # Build a dictionary keyed by case ID
+    report_dict = {
+        str(row["id"]): {
+            "gt": row["gt"],
+            "gen": row["generated_output"]
+        }
+        for _, row in df_reports.iterrows()
+    }
+else:
+    report_dict = {}  # fallback if CSVs are missing
+
+# --------------------------------------------------
+# 11. PAGES
+# --------------------------------------------------
+
 def index():
     st.title("Survey App")
     if total_cases == 0:
         st.error("No cases found.")
         return
+
     st.markdown("### Your Progress")
     st.markdown(f"- **Turing Test**: Case {st.session_state.last_case_turing + 1}/{total_cases}")
     st.markdown(f"- **Standard Eval**: Case {st.session_state.last_case_standard + 1}/{total_cases}")
     st.markdown(f"- **AI Edit**: Case {st.session_state.last_case_ai + 1}/{total_cases}")
     st.markdown("---")
+
     c1, c2, c3, c4 = st.columns(4)
     if c1.button("Turing Test"):
         st.experimental_set_query_params(page="turing_test")
@@ -404,6 +398,7 @@ def turing_test():
             st.experimental_set_query_params(page="index")
             st.rerun()
         return
+
     case = cases[idx]
     st.header(f"Turing Test: {case} ({idx + 1}/{total_cases})")
 
@@ -412,7 +407,7 @@ def turing_test():
         st.experimental_set_query_params(page="index")
         st.rerun()
 
-    # ── Load reports from the combined dictionary ──
+    # Load reports from the combined dictionary
     reports = report_dict.get(case, {})
     gt_report  = reports.get("gt",  load_text(os.path.join(NORMAL_IMAGE_DIR, case, "text.txt")))
     gen_report = reports.get("gen", load_text(os.path.join(NORMAL_IMAGE_DIR, case, "pred.txt")))
@@ -421,6 +416,7 @@ def turing_test():
     if case not in assigns:
         assigns[case] = random.choice([True, False])
         st.session_state.assignments_turing = assigns
+
     if assigns[case]:
         A, B = gen_report, gt_report
     else:
@@ -432,7 +428,12 @@ def turing_test():
     st.text_area("B", B, height=200, key=f"B_t_{case}")
 
     if st.session_state.initial_eval_turing is None:
-        choice = st.radio("Which is ground truth?", ["A","B","Not sure"], key=f"ch_t_{case}", index=2)
+        choice = st.radio(
+            "Which is ground truth?",
+            ["A","B","Not sure"],
+            key=f"ch_t_{case}",
+            index=2
+        )
         if st.button("Submit Initial"):
             st.session_state.initial_eval_turing = choice
             st.session_state.viewed_images_turing = True
@@ -443,10 +444,16 @@ def turing_test():
         st.markdown("#### Images")
         display_carousel("turing", case)
         st.markdown(f"**Initial Eval:** {st.session_state.initial_eval_turing}")
+
         up = st.radio("Keep or Update?", ["Keep","Update"], key=f"up_t_{case}")
         final = st.session_state.initial_eval_turing
         if up == "Update":
-            final = st.radio("New choice:", ["A","B","Not sure"], key=f"new_t_{case}", index=2)
+            final = st.radio(
+                "New choice:",
+                ["A","B","Not sure"],
+                key=f"new_t_{case}",
+                index=2
+            )
         st.session_state.final_eval_turing = final
 
         if st.button("Finalize & Next"):
@@ -459,6 +466,8 @@ def turing_test():
                 "viewed_images": st.session_state.viewed_images_turing
             }
             save_progress("turing_test", prog)
+
+            # Reset and advance
             st.session_state.last_case_turing += 1
             st.session_state.current_slice_turing = 0
             st.session_state.initial_eval_turing = None
@@ -475,6 +484,7 @@ def evaluate_case():
             st.experimental_set_query_params(page="index")
             st.rerun()
         return
+
     case = cases[idx]
     st.header(f"Standard Eval: {case} ({idx + 1}/{total_cases})")
 
@@ -483,6 +493,7 @@ def evaluate_case():
         st.experimental_set_query_params(page="index")
         st.rerun()
 
+    # Load reports from the combined dictionary
     reports = report_dict.get(case, {})
     gt_report  = reports.get("gt",  load_text(os.path.join(NORMAL_IMAGE_DIR, case, "text.txt")))
     gen_report = reports.get("gen", load_text(os.path.join(NORMAL_IMAGE_DIR, case, "pred.txt")))
@@ -491,6 +502,7 @@ def evaluate_case():
     if case not in assigns:
         assigns[case] = random.choice([True, False])
         st.session_state.assignments_standard = assigns
+
     if assigns[case]:
         A, B = gen_report, gt_report
     else:
@@ -507,9 +519,13 @@ def evaluate_case():
     organ  = st.selectbox("Organ", [""] + ["LIVER","PANCREAS","KIDNEY","OTHER"], key=f"org_s_{case}")
     reason = st.text_input("Reason", key=f"rsn_s_{case}")
     details= st.text_area("Details", key=f"dtl_s_{case}")
+
     if st.button("Add Correction") and organ:
         st.session_state.corrections_standard.append({
-            "case_id": case, "organ": organ, "reason": reason, "details": details
+            "case_id": case,
+            "organ": organ,
+            "reason": reason,
+            "details": details
         })
         st.success("Added correction")
         st.rerun()
@@ -529,6 +545,8 @@ def evaluate_case():
             "corrections": st.session_state.corrections_standard
         }
         save_progress("standard_evaluation", prog)
+
+        # Remove only this case's corrections from memory
         st.session_state.corrections_standard = [
             c for c in st.session_state.corrections_standard if c["case_id"] != case
         ]
@@ -545,6 +563,7 @@ def ai_edit():
             st.experimental_set_query_params(page="index")
             st.rerun()
         return
+
     case = cases[idx]
     st.header(f"AI Edit: {case} ({idx + 1}/{total_cases})")
 
@@ -564,6 +583,7 @@ def ai_edit():
            load_text(os.path.join(NORMAL_IMAGE_DIR, case, "pred.txt")))
     st.subheader("Original AI Report")
     st.text_area("orig", orig, height=150, disabled=True)
+
     st.markdown("#### Images")
     display_carousel("ai", case)
 
@@ -580,7 +600,10 @@ def ai_edit():
         details= st.text_area("Details", key=f"dtl_ai_{case}")
         if st.button("Add Corr AI") and organ:
             st.session_state.corrections_ai.append({
-                "case_id": case, "organ": organ, "reason": reason, "details": details
+                "case_id": case, 
+                "organ": organ, 
+                "reason": reason, 
+                "details": details
             })
             st.success("Added")
             st.rerun()
@@ -602,7 +625,9 @@ def ai_edit():
             "corrections": st.session_state.corrections_ai
         }
         save_progress("ai_edit", prog)
-        st.session_state.corrections_ai = [c for c in st.session_state.corrections_ai if c["case_id"] != case]
+        st.session_state.corrections_ai = [
+            c for c in st.session_state.corrections_ai if c["case_id"] != case
+        ]
         st.session_state.assembled_ai = ""
         st.session_state.last_case_ai += 1
         st.session_state.current_slice_ai = 0
@@ -617,7 +642,7 @@ def view_all_results():
 
     conn = get_db_connection()
 
-    # Sessions
+    # List all sessions
     df_sessions = pd.read_sql_query(
         "SELECT DISTINCT session_id FROM progress_logs ORDER BY session_id", conn
     )
@@ -673,7 +698,7 @@ def view_all_results():
     conn.close()
 
 # --------------------------------------------------
-# 13. Main Router
+# 12. Main Router
 # --------------------------------------------------
 page = st.session_state.page
 if page == "turing_test":
