@@ -42,7 +42,7 @@ else:
 # Create default config if file doesn't exist
 if not os.path.exists("config.yaml"):
     # Create 10 test users with hashed passwords
-    passwords = Hasher(['pass1', 'pass2', 'pass3', 'pass4', 'pass5', 
+    passwords = Hasher(['pass1', 'pass2', 'pass3', 'pass4', 'pass5',
                         'pass6', 'pass7', 'pass8', 'pass9', 'pass10']).generate()
     
     config = {
@@ -66,10 +66,11 @@ if not os.path.exists("config.yaml"):
     with open("config.yaml", "w") as file:
         yaml.dump(config, file)
 
-with open("config.yaml") as file:
+# Load the YAML config
+with open("config.yaml", "r", encoding="utf-8") as file:
     config = yaml.load(file, Loader=SafeLoader)
 
-# SIMPLIFIED: Use the config directly since passwords are pre-hashed
+# Set up Streamlit-Authenticator
 authenticator = stauth.Authenticate(
     credentials        = config['credentials'],
     cookie_name        = config['cookie']['name'],
@@ -78,13 +79,14 @@ authenticator = stauth.Authenticate(
     preauthorized      = config.get('preauthorized', [])
 )
 
+# Render login widget in the sidebar
 authenticator.login(location="sidebar", key="login")
 
-name                = st.session_state.get("name")
+name                  = st.session_state.get("name")
 authentication_status = st.session_state.get("authentication_status")
-username            = st.session_state.get("username")
+username              = st.session_state.get("username")
 
-# ADDED: Logout button
+# ADDED: Logout button if logged in
 if authentication_status:
     authenticator.logout('Logout', 'sidebar', key='logout_button')
 
@@ -108,6 +110,8 @@ def get_db_connection():
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
+
+    # 1) Create progress_logs if it doesn't exist (with username column included)
     c.execute('''
     CREATE TABLE IF NOT EXISTS progress_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,25 +120,40 @@ def init_db():
       category TEXT,
       progress_json TEXT,
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
+    )
+    ''')  # :contentReference[oaicite:4]{index=4}
+
+    # 2) Check if 'username' column truly exists; if not, add it.
+    #    Query current schema:
+    c.execute("PRAGMA table_info(progress_logs)")
+    cols = [row[1] for row in c.fetchall()]  # row[1] is the column name :contentReference[oaicite:5]{index=5}
+    if "username" not in cols:
+        c.execute("ALTER TABLE progress_logs ADD COLUMN username TEXT")  # :contentReference[oaicite:6]{index=6}
+
+    # 3) Create annotations table (unchanged)
     c.execute('''
     CREATE TABLE IF NOT EXISTS annotations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       case_id TEXT,
       annotations_json TEXT,
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-    )''')
-    # ADDED: User progress tracking
+    )
+    ''')
+
+    # 4) Create user_progress table (unchanged)
     c.execute('''
     CREATE TABLE IF NOT EXISTS user_progress (
       username TEXT PRIMARY KEY,
       last_case_turing INTEGER DEFAULT 0,
       last_case_standard INTEGER DEFAULT 0,
       last_case_ai INTEGER DEFAULT 0
-    )''')
+    )
+    ''')
+
     conn.commit()
     conn.close()
 
+# Initialize the database (will add missing 'username' column if needed)
 init_db()
 
 # --------------------------------------------------
@@ -167,7 +186,7 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
 # --------------------------------------------------
-# 2. Sidebar: Display Session ID
+# 2. Sidebar: Display Session ID & Username
 # --------------------------------------------------
 st.sidebar.markdown(f"**Session ID:** `{st.session_state.session_id}`")
 st.sidebar.markdown(f"**User:** {name}")
@@ -179,8 +198,10 @@ def save_progress(category: str, progress: dict):
     sid = st.session_state.session_id
     if not should_log(sid, category, progress):
         return
+
     os.makedirs(DB_DIR, exist_ok=True)
-    # JSON
+
+    # Save JSON file
     jpath = os.path.join(DB_DIR, f"{category}_{sid}_progress.json")
     if os.path.exists(jpath):
         with open(jpath, "r", encoding="utf-8") as f:
@@ -191,14 +212,16 @@ def save_progress(category: str, progress: dict):
     data.append(progress)
     with open(jpath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
-    # CSV
+
+    # Save CSV file
     cpath = os.path.join(DB_DIR, f"{category}_{sid}_progress.csv")
     df = pd.DataFrame([progress])
     if os.path.exists(cpath):
         df.to_csv(cpath, index=False, mode="a", header=False)
     else:
         df.to_csv(cpath, index=False)
-    # SQLite
+
+    # Save to SQLite
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
@@ -223,6 +246,7 @@ def save_annotations(case_id: str, annotations: list):
     data.extend(annotations)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
@@ -239,7 +263,7 @@ def init_state(key, default):
     if key not in st.session_state:
         st.session_state[key] = default
 
-# ADDED: Load user progress from database
+# Load user progress from database on first login
 def load_user_progress():
     conn = get_db_connection()
     c = conn.cursor()
@@ -251,16 +275,16 @@ def load_user_progress():
     row = c.fetchone()
     conn.close()
     if row:
-        st.session_state.last_case_turing = row[0]
+        st.session_state.last_case_turing  = row[0]
         st.session_state.last_case_standard = row[1]
-        st.session_state.last_case_ai = row[2]
+        st.session_state.last_case_ai       = row[2]
     else:
         # Initialize to 0 if no record exists
-        st.session_state.last_case_turing = 0
+        st.session_state.last_case_turing  = 0
         st.session_state.last_case_standard = 0
-        st.session_state.last_case_ai = 0
+        st.session_state.last_case_ai       = 0
 
-# ADDED: Save user progress to database
+# Save user progress to database whenever updated
 def save_user_progress():
     conn = get_db_connection()
     c = conn.cursor()
@@ -275,7 +299,7 @@ def save_user_progress():
     conn.commit()
     conn.close()
 
-# Load user progress on login
+# Load user progress exactly once after login
 if 'progress_loaded' not in st.session_state:
     load_user_progress()
     st.session_state.progress_loaded = True
@@ -372,7 +396,7 @@ def display_carousel(category, case_id):
         if soft_imgs:
             st.image(soft_imgs[idx], caption="Soft Tissue", use_column_width=True)
         else:
-            st.info("No soft‐tissue images.")
+            st.info("No soft-tissue images.")
     with c_next:
         if st.button("Next ⟩", key=f"next_{category}_{case_id}") and idx < max_slices - 1:
             st.session_state[key] = idx + 1
