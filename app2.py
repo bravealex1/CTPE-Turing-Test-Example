@@ -9,23 +9,120 @@ import sqlite3
 from datetime import datetime
 
 import streamlit_authenticator as stauth
-import yaml
-from yaml.loader import SafeLoader
 from streamlit_authenticator.utilities.hasher import Hasher
 
 # --------------------------------------------------
-# Load Reports from CSV (Normal & Abnormal)
+# 0. Inline Credentials Setup (10 Users)
 # --------------------------------------------------
-# Paths to the CSVs
+# We define ten users here; each user has:
+# - username (key in the 'usernames' dict)
+# - email
+# - name  (full name for display)
+# - password (plaintext; will be hashed)
+credentials = {
+    "usernames": {
+        "tester1": {
+            "email": "tester1@example.com",
+            "name": "Tester One",
+            "password": "Password1!"
+        },
+        "tester2": {
+            "email": "tester2@example.com",
+            "name": "Tester Two",
+            "password": "Password2!"
+        },
+        "tester3": {
+            "email": "tester3@example.com",
+            "name": "Tester Three",
+            "password": "Password3!"
+        },
+        "tester4": {
+            "email": "tester4@example.com",
+            "name": "Tester Four",
+            "password": "Password4!"
+        },
+        "tester5": {
+            "email": "tester5@example.com",
+            "name": "Tester Five",
+            "password": "Password5!"
+        },
+        "tester6": {
+            "email": "tester6@example.com",
+            "name": "Tester Six",
+            "password": "Password6!"
+        },
+        "tester7": {
+            "email": "tester7@example.com",
+            "name": "Tester Seven",
+            "password": "Password7!"
+        },
+        "tester8": {
+            "email": "tester8@example.com",
+            "name": "Tester Eight",
+            "password": "Password8!"
+        },
+        "tester9": {
+            "email": "tester9@example.com",
+            "name": "Tester Nine",
+            "password": "Password9!"
+        },
+        "tester10": {
+            "email": "tester10@example.com",
+            "name": "Tester Ten",
+            "password": "Password10!"
+        }
+    }
+}
+
+# Hash all plaintext passwords in-place so that the authenticator
+# expects and stores only bcrypt hashes.
+credentials["usernames"] = Hasher.hash_passwords(credentials["usernames"])
+
+# --------------------------------------------------
+# 1. Authentication Setup (must be first)
+# --------------------------------------------------
+# We set up Streamlit-Authenticator to handle login, logout, and cookie-based sessions.
+authenticator = stauth.Authenticate(
+    credentials        = credentials["usernames"],
+    cookie_name        = "survey_app_cookie",
+    key                = "survey_app_key",
+    cookie_expiry_days = 180,
+    preauthorized      = []  # No preauthorized users
+)
+
+# Render the login form in the sidebar.
+# Users will see a prompt to enter username/password.
+authenticator.login(location="sidebar", key="login")
+
+# Retrieve authentication results from Streamlit's session state.
+name                  = st.session_state.get("name")
+authentication_status = st.session_state.get("authentication_status")
+username              = st.session_state.get("username")
+
+# If not authenticated, show appropriate messages and stop the script.
+if not authentication_status:
+    if authentication_status is False:
+        st.sidebar.error("❌ Username/password is incorrect")
+    else:
+        st.sidebar.warning("⚠️ Please enter your username and password")
+    st.stop()
+
+# If authenticated, show a logout button in the sidebar.
+# When clicked, the user is immediately logged out and returned to the login form.
+if authentication_status:
+    authenticator.logout("Logout", "sidebar", key="logout")
+    st.sidebar.write(f"Welcome, *{name}*")
+
+# --------------------------------------------------
+# 2. Load Reports from CSV (Normal & Abnormal)
+# --------------------------------------------------
 NORMAL_CSV = r"normal_top_15.csv"
 ABNORMAL_CSV = r"abnormal_top_15.csv"
 
-# Read both CSVs and combine
 if os.path.exists(NORMAL_CSV) and os.path.exists(ABNORMAL_CSV):
     df_normal = pd.read_csv(NORMAL_CSV)
     df_abnormal = pd.read_csv(ABNORMAL_CSV)
     df_reports = pd.concat([df_normal, df_abnormal], ignore_index=True)
-    # Build a dictionary keyed by case ID
     report_dict = {
         str(row["id"]): {
             "gt": row["gt"],
@@ -37,38 +134,7 @@ else:
     report_dict = {}  # fallback if CSVs are missing
 
 # --------------------------------------------------
-# 0. Authentication Setup (must be first)
-# --------------------------------------------------
-with open("config.yaml") as file:
-    config = yaml.load(file, Loader=SafeLoader)
-
-if "credentials" not in config or "usernames" not in config["credentials"]:
-    st.error("❌ Your config.yaml must include a 'credentials → usernames' section.")
-    st.stop()
-
-config["credentials"] = Hasher.hash_passwords(config["credentials"])
-authenticator = stauth.Authenticate(
-    credentials        = config["credentials"],
-    cookie_name        = config["cookie"]["name"],
-    key                = config["cookie"]["key"],
-    cookie_expiry_days = config["cookie"]["expiry_days"],
-    preauthorized      = config.get("preauthorized", [])
-)
-authenticator.login(location="sidebar", key="login")
-
-name                  = st.session_state.get("name")
-authentication_status = st.session_state.get("authentication_status")
-username              = st.session_state.get("username")
-
-if not authentication_status:
-    if authentication_status is False:
-        st.error("❌ Username/password is incorrect")
-    else:
-        st.warning("⚠️ Please enter your username and password")
-    st.stop()
-
-# --------------------------------------------------
-# 0. Database Setup for Queryable Logs
+# 3. Database Setup for Queryable Logs
 # --------------------------------------------------
 DB_DIR  = "logs"
 DB_PATH = os.path.join(DB_DIR, "logs.db")
@@ -101,7 +167,7 @@ def init_db():
 init_db()
 
 # --------------------------------------------------
-# Helper: Prevent Duplicate SQLite Inserts
+# 4. Helper: Prevent Duplicate SQLite Inserts
 # --------------------------------------------------
 def should_log(session_id: str, category: str, new_progress: dict) -> bool:
     conn = get_db_connection()
@@ -124,18 +190,18 @@ def should_log(session_id: str, category: str, new_progress: dict) -> bool:
     return True
 
 # --------------------------------------------------
-# 1. Generate & Store Unique Session ID
+# 5. Generate & Store Unique Session ID
 # --------------------------------------------------
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
 # --------------------------------------------------
-# 2. Sidebar: Display Session ID
+# 6. Sidebar: Display Session ID
 # --------------------------------------------------
 st.sidebar.markdown(f"**Session ID:** `{st.session_state.session_id}`")
 
 # --------------------------------------------------
-# 3. Utility: Save Progress per Category & Session
+# 7. Utility: Save Progress per Category & Session
 # --------------------------------------------------
 def save_progress(category: str, progress: dict):
     sid = st.session_state.session_id
@@ -171,7 +237,7 @@ def save_progress(category: str, progress: dict):
     conn.close()
 
 # --------------------------------------------------
-# 4. Utility: Save Annotations per Case
+# 8. Utility: Save Annotations per Case
 # --------------------------------------------------
 def save_annotations(case_id: str, annotations: list):
     os.makedirs("evaluations", exist_ok=True)
@@ -195,7 +261,7 @@ def save_annotations(case_id: str, annotations: list):
     conn.close()
 
 # --------------------------------------------------
-# 5. Initialize per-workflow Session State
+# 9. Initialize per-workflow Session State
 # --------------------------------------------------
 def init_state(key, default):
     if key not in st.session_state:
@@ -222,7 +288,7 @@ init_state("corrections_ai",  [])
 init_state("assembled_ai",    "")
 
 # --------------------------------------------------
-# 6. Routing Setup
+# 10. Routing Setup & Data Directories
 # --------------------------------------------------
 params = st.experimental_get_query_params()
 if "page" in params:
@@ -230,25 +296,22 @@ if "page" in params:
 elif "page" not in st.session_state:
     st.session_state.page = "index"
 
-# ── ADAPTED: point to the folders containing normal & abnormal cases ──
 NORMAL_IMAGE_DIR   = r"sampled_normal"
 ABNORMAL_IMAGE_DIR = r"sampled_abnormal"
 
-# Get list of case IDs from both directories
 cases_normal   = sorted([d for d in os.listdir(NORMAL_IMAGE_DIR)   if os.path.isdir(os.path.join(NORMAL_IMAGE_DIR, d))])
 cases_abnormal = sorted([d for d in os.listdir(ABNORMAL_IMAGE_DIR) if os.path.isdir(os.path.join(ABNORMAL_IMAGE_DIR, d))])
 cases = sorted(cases_normal + cases_abnormal)
 total_cases = len(cases)
 
 # --------------------------------------------------
-# 7. Helpers for Text & Carousel (adjusted folder names)
+# 11. Helpers for Text & Carousel
 # --------------------------------------------------
 def load_text(path):
     return open(path, "r", encoding="utf-8").read() if os.path.exists(path) else ""
 
 def display_carousel(category, case_id):
     key = f"current_slice_{category}"
-    # Determine which base folder this case lives in
     if case_id in cases_normal:
         base_dir = NORMAL_IMAGE_DIR
     else:
@@ -305,7 +368,7 @@ def display_carousel(category, case_id):
             st.rerun()
 
 # --------------------------------------------------
-# 8. Pages
+# 12. Page Definitions
 # --------------------------------------------------
 def index():
     st.title("Survey App")
@@ -423,7 +486,6 @@ def evaluate_case():
         st.experimental_set_query_params(page="index")
         st.rerun()
 
-    # ── Load reports from the combined dictionary ──
     reports = report_dict.get(case, {})
     gt_report  = reports.get("gt",  load_text(os.path.join(NORMAL_IMAGE_DIR, case, "text.txt")))
     gen_report = reports.get("gen", load_text(os.path.join(NORMAL_IMAGE_DIR, case, "pred.txt")))
@@ -614,7 +676,7 @@ def view_all_results():
     conn.close()
 
 # --------------------------------------------------
-# 9. Main Router
+# 13. Main Router
 # --------------------------------------------------
 page = st.session_state.page
 if page == "turing_test":
