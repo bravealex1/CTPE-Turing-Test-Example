@@ -28,5 +28,5 @@ cookie:
   # A secret key for signing the cookie (make this long & random!)
   key: your-very-secret-key-goes-here
   # How many days the login persists
-  expiry_days: 30
+  expiry_days: 180
 
