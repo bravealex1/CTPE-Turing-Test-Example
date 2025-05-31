@@ -55,7 +55,7 @@ if "credentials" not in config or "usernames" not in config["credentials"]:
 # Hash passwords in the config dictionary if they are not already hashed
 # This is a one-time operation if you store plain passwords in YAML and let the script hash them.
 # For production, you might pre-hash them.
-hashed_creds = Hasher.hash_passwords(config["credentials"]) # Hasher now returns a tuple (bool, dict)
+config["credentials"]["usernames"] = Hasher.hash_passwords(config["credentials"]["usernames"]) # Hasher now returns a tuple (bool, dict)
 if hashed_creds[0]: # Check if hashing was successful / necessary
     config["credentials"] = hashed_creds[1]
 else: # If passwords were already hashed, Hasher.hash_passwords returns (False, original_credentials)
