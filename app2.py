@@ -17,124 +17,98 @@ from streamlit_authenticator.utilities.hasher import Hasher
 # --------------------------------------------------
 # 0. Load credentials + cookie settings from YAML
 # --------------------------------------------------
-# Open config.yaml (must be in the same directory as this script)
-with open("config.yaml", "r", encoding="utf-8") as file:
-    config = yaml.load(file, Loader=SafeLoader)
+CONFIG_PATH = "config.yaml"
+if not os.path.exists(CONFIG_PATH):
+    st.error(f"⚠️ Could not find '{CONFIG_PATH}'. Make sure this file is in the same directory as your Streamlit app.")
+    st.stop()
 
-# Extract the 'credentials' block
+with open(CONFIG_PATH, "r", encoding="utf-8") as file:
+    try:
+        config = yaml.load(file, Loader=SafeLoader)
+    except yaml.YAMLError as e:
+        st.error(f"⚠️ Error parsing '{CONFIG_PATH}':\n{e}")
+        st.stop()
+
+# --------------------------------------------------
+# 1. Extract credentials block
+# --------------------------------------------------
 credentials = config.get("credentials", {})
 if "usernames" not in credentials:
     st.error("⚠️ 'usernames' key not found under 'credentials' in config.yaml")
     st.stop()
 
-# Check if passwords are properly hashed
-try:
-    first_user = list(credentials["usernames"].values())[0]
-    if '$' not in first_user.get('password', ''):
-        st.error("⚠️ Passwords in config.yaml are not hashed. Please run the password hashing script first.")
-        st.info("Create a file called 'generate_hashes.py' and run it to generate hashed passwords.")
-        
-        # Show the password hashing script in an expandable section
-        with st.expander("Click to see the password hashing script"):
-            st.code('''
-import streamlit_authenticator as stauth
-
-# Your current passwords
-passwords = [
-    'Password1!', 'Password2!', 'Password3!', 'Password4!', 'Password5!',
-    'Password6!', 'Password7!', 'Password8!', 'Password9!', 'Password10!'
-]
-
-usernames = [
-    'tester1', 'tester2', 'tester3', 'tester4', 'tester5',
-    'tester6', 'tester7', 'tester8', 'tester9', 'tester10'
-]
-
-# Try different methods to hash passwords
-try:
-    # Method 1: Direct instantiation with passwords
-    hasher = stauth.Hasher(passwords)
-    hashed_passwords = hasher.generate()
-    print("Method 1 worked!")
-except:
-    try:
-        # Method 2: Empty constructor then hash method
-        hasher = stauth.Hasher()
-        hashed_passwords = hasher.hash(passwords)
-        print("Method 2 worked!")
-    except:
-        try:
-            # Method 3: Static method
-            user_dict = {}
-            for i, username in enumerate(usernames):
-                user_dict[username] = {
-                    'email': f'{username}@example.com',
-                    'name': f'Tester {username.replace("tester", "").title()}',
-                    'password': passwords[i]
-                }
-            hashed_dict = stauth.Hasher.hash_passwords(user_dict)
-            hashed_passwords = [hashed_dict[username]['password'] for username in usernames]
-            print("Method 3 worked!")
-        except Exception as e:
-            print(f"All methods failed: {e}")
-            exit()
-
-# Print the results
-print("\\nHashed passwords:")
-print("Copy these into your config.yaml file:")
-print()
-
-for username, hashed_pwd in zip(usernames, hashed_passwords):
-    print(f"    {username}:")
-    print(f"      email: {username}@example.com")
-    print(f"      name: Tester {username.replace('tester', '').title()}")
-    print(f"      password: '{hashed_pwd}'")
-    print()
-            ''', language='python')
-        
-        st.info("1. Copy the above code into a file called 'generate_hashes.py'")
-        st.info("2. Run: python generate_hashes.py")
-        st.info("3. Copy the output into your config.yaml file")
-        st.info("4. Refresh this app")
-        st.stop()
-    else:
-        st.success("✅ Passwords are properly hashed")
-        
-except Exception as e:
-    st.error(f"Error checking password format: {e}")
-    st.stop()
+user_dict = credentials["usernames"]
 
 # --------------------------------------------------
-# 1. Authentication Setup (must be first in the script)
+# 2. Hash any plaintext passwords at runtime
+# --------------------------------------------------
+# Build three parallel lists: names, emails, and passwords (hash if needed)
+names_list = []
+emails_list = []
+passwords_list = []
+
+for username, user_info in user_dict.items():
+    # Expect user_info to have keys: 'email', 'name', 'password'
+    raw_pwd = user_info.get("password", "")
+    display_name = user_info.get("name", "")
+    email_addr = user_info.get("email", "")
+
+    # If the stored password does NOT look like a bcrypt hash (no leading '$2b$' or '$2a$'),
+    # then hash it now. Otherwise, take it as already‐hashed.
+    if raw_pwd.startswith("$2b$") or raw_pwd.startswith("$2a$"):
+        hashed_pwd = raw_pwd
+    else:
+        try:
+            # stauth.Hasher.hash_passwords can accept a dict mapping user→password,
+            # but here we'll hash one by one so we preserve order.
+            hashed_pwd = Hasher([raw_pwd]).generate()[0]
+        except Exception as e:
+            st.error(f"⚠️ Failed to hash password for user '{username}': {e}")
+            st.stop()
+
+    names_list.append(display_name)
+    emails_list.append(email_addr)
+    passwords_list.append(hashed_pwd)
+
+# --------------------------------------------------
+# 3. Pull in the rest of the YAML blocks: cookie & preauthorized
+# --------------------------------------------------
+cookie_config = config.get("cookie", {})
+preauth_config = config.get("preauthorized", {})
+
+cookie_name      = cookie_config.get("name", "streamlit_auth_cookie")
+cookie_key       = cookie_config.get("key", "changeme‐safe‐key‐please")
+cookie_expiry    = cookie_config.get("expiry_days", 30)
+preauth_emails   = preauth_config.get("emails", [])
+
+# --------------------------------------------------
+# 4. Instantiate Streamlit‐Authenticator
 # --------------------------------------------------
 authenticator = stauth.Authenticate(
-    credentials        = credentials["usernames"],
-    cookie_name        = config["cookie"]["name"],
-    key                = config["cookie"]["key"],
-    cookie_expiry_days = config["cookie"]["expiry_days"],
-    preauthorized      = config.get("preauthorized", {}).get("emails", [])
+    names_list,
+    emails_list,
+    passwords_list,
+    cookie_name=cookie_name,
+    key=cookie_key,
+    cookie_expiry_days=cookie_expiry,
+    preauthorized=preauth_emails,
 )
 
-# Render the login form in the sidebar
-authenticator.login(location="sidebar", key="login")
+# --------------------------------------------------
+# 5. Call the login widget
+# --------------------------------------------------
+name, authentication_status, username = authenticator.login("Login", "main")
 
-# Retrieve authentication results from session state
-name                  = st.session_state.get("name")
-authentication_status = st.session_state.get("authentication_status")
-username              = st.session_state.get("username")
+if authentication_status is False:
+    st.error("⚠️ Username/password is incorrect")
+elif authentication_status is None:
+    st.warning("ℹ️ Please enter your username and password")
+elif authentication_status:
+    st.success(f"✅ Welcome *{name}*")
 
-# If not authenticated, show a warning or error and stop
-if not authentication_status:
-    if authentication_status is False:
-        st.sidebar.error("❌ Username/password is incorrect")
-    else:
-        st.sidebar.warning("⚠️ Please enter your username and password")
-    st.stop()
-
-# If authenticated, show a Logout button and welcome message
-if authentication_status:
-    authenticator.logout("Logout", "sidebar", key="logout")
-    st.sidebar.write(f"Welcome, *{name}*")
+    # You can now proceed with the rest of your app,
+    # for example: st.write("Protected content goes here...")
+    authenticator.logout("Logout", "sidebar")
 
 # --------------------------------------------------
 # 2. Load Reports from CSV (Normal & Abnormal)
