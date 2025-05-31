@@ -17,18 +17,17 @@ from streamlit_authenticator.utilities.hasher import Hasher
 # --------------------------------------------------
 # 0. Load credentials + cookie settings from YAML
 # --------------------------------------------------
-# Load the YAML file
+# Open config.yaml (must be in the same directory as this script)
 with open("config.yaml", "r", encoding="utf-8") as file:
     config = yaml.load(file, Loader=SafeLoader)
 
-# Extract credentials (this must match 'credentials → usernames' in YAML)
+# Extract the 'credentials' block
 credentials = config.get("credentials", {})
 if "usernames" not in credentials:
     st.error("⚠️ 'usernames' key not found under 'credentials' in config.yaml")
     st.stop()
 
-# Hash all plaintext passwords in-place so that the authenticator
-# only works with bcrypt hashed values.
+# Hash all plaintext passwords in-place
 credentials["usernames"] = Hasher.hash_passwords(credentials["usernames"])
 
 # --------------------------------------------------
@@ -42,15 +41,15 @@ authenticator = stauth.Authenticate(
     preauthorized      = config.get("preauthorized", {}).get("emails", [])
 )
 
-# Render the login form in the sidebar.
+# Render the login form in the sidebar
 authenticator.login(location="sidebar", key="login")
 
-# Retrieve authentication results from Streamlit's session state.
+# Retrieve authentication results from session state
 name                  = st.session_state.get("name")
 authentication_status = st.session_state.get("authentication_status")
 username              = st.session_state.get("username")
 
-# If not authenticated, show messages and stop the script.
+# If not authenticated, show a warning or error and stop
 if not authentication_status:
     if authentication_status is False:
         st.sidebar.error("❌ Username/password is incorrect")
@@ -58,7 +57,7 @@ if not authentication_status:
         st.sidebar.warning("⚠️ Please enter your username and password")
     st.stop()
 
-# If authenticated, show a logout button and a welcome message.
+# If authenticated, show a Logout button and welcome message
 if authentication_status:
     authenticator.logout("Logout", "sidebar", key="logout")
     st.sidebar.write(f"Welcome, *{name}*")
