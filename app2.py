@@ -37,7 +37,7 @@ else:
     report_dict = {}  # fallback if CSVs are missing
 
 # --------------------------------------------------
-# 0. Authentication Setup (must be first) - FIXED
+# 0. Authentication Setup (must be first) - SIMPLIFIED
 # --------------------------------------------------
 # Create default config if file doesn't exist
 if not os.path.exists("config.yaml"):
@@ -69,11 +69,7 @@ if not os.path.exists("config.yaml"):
 with open("config.yaml") as file:
     config = yaml.load(file, Loader=SafeLoader)
 
-# FIXED: Corrected hashing method
-hashed_creds = Hasher.hash_passwords(config['credentials'])
-if hashed_creds[0]:
-    config['credentials'] = hashed_creds[1]
-
+# SIMPLIFIED: Use the config directly since passwords are pre-hashed
 authenticator = stauth.Authenticate(
     credentials        = config['credentials'],
     cookie_name        = config['cookie']['name'],
@@ -116,6 +112,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS progress_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id TEXT,
+      username TEXT,
       category TEXT,
       progress_json TEXT,
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -205,8 +202,8 @@ def save_progress(category: str, progress: dict):
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO progress_logs(session_id, category, progress_json) VALUES (?, ?, ?)",
-        (sid, category, json.dumps(progress))
+        "INSERT INTO progress_logs(session_id, username, category, progress_json) VALUES (?, ?, ?, ?)",
+        (sid, username, category, json.dumps(progress))
     )
     conn.commit()
     conn.close()
@@ -257,6 +254,11 @@ def load_user_progress():
         st.session_state.last_case_turing = row[0]
         st.session_state.last_case_standard = row[1]
         st.session_state.last_case_ai = row[2]
+    else:
+        # Initialize to 0 if no record exists
+        st.session_state.last_case_turing = 0
+        st.session_state.last_case_standard = 0
+        st.session_state.last_case_ai = 0
 
 # ADDED: Save user progress to database
 def save_user_progress():
@@ -275,9 +277,6 @@ def save_user_progress():
 
 # Load user progress on login
 if 'progress_loaded' not in st.session_state:
-    init_state("last_case_turing", 0)
-    init_state("last_case_standard", 0)
-    init_state("last_case_ai", 0)
     load_user_progress()
     st.session_state.progress_loaded = True
 
@@ -638,11 +637,10 @@ def view_all_results():
 
     # Sessions
     df_sessions = pd.read_sql_query(
-        "SELECT DISTINCT session_id FROM progress_logs ORDER BY session_id", conn
+        "SELECT DISTINCT session_id, username FROM progress_logs ORDER BY session_id", conn
     )
     st.subheader("All Sessions with Saved Progress")
-    for sid in df_sessions["session_id"]:
-        st.write(f"- {sid}")
+    st.dataframe(df_sessions)
 
     # Turing & Standard
     for cat, label in [
@@ -651,41 +649,39 @@ def view_all_results():
     ]:
         st.subheader(label)
         df = pd.read_sql_query(
-            "SELECT session_id, progress_json, timestamp FROM progress_logs WHERE category=? ORDER BY timestamp",
+            "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category=? ORDER BY timestamp",
             conn, params=(cat,)
         )
         if not df.empty:
-            df_expanded = pd.concat([
-                df.drop(columns=["progress_json"]),
-                df["progress_json"].apply(json.loads).apply(pd.Series)
-            ], axis=1)
-            for col in df_expanded.columns:
-                if df_expanded[col].apply(lambda x: isinstance(x, (dict, list))).any():
-                    df_expanded[col] = df_expanded[col].apply(json.dumps)
-            if "last_case" in df_expanded.columns:
-                df_expanded["Case"] = df_expanded["last_case"] + 1
-                df_expanded = df_expanded.drop(columns=["last_case"])
-                cols = ["Case"] + [c for c in df_expanded.columns if c != "Case"]
-                st.dataframe(df_expanded[cols])
-            else:
-                st.dataframe(df_expanded)
+            # Expand the JSON data
+            expanded_data = []
+            for _, row in df.iterrows():
+                progress = json.loads(row['progress_json'])
+                progress['session_id'] = row['session_id']
+                progress['username'] = row['username']
+                progress['timestamp'] = row['timestamp']
+                expanded_data.append(progress)
+            
+            st.dataframe(pd.DataFrame(expanded_data))
         else:
             st.write("— no entries —")
 
     # AI Report Edit Logs
     st.subheader("AI Report Edit Logs")
     df_ai = pd.read_sql_query(
-        "SELECT session_id, progress_json, timestamp FROM progress_logs WHERE category='ai_edit' ORDER BY timestamp", conn
+        "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category='ai_edit' ORDER BY timestamp", conn
     )
     if not df_ai.empty:
-        df_ai_expanded = pd.concat([
-            df_ai.drop(columns=["progress_json"]),
-            df_ai["progress_json"].apply(json.loads).apply(pd.Series)
-        ], axis=1)
-        for col in df_ai_expanded.columns:
-            if df_ai_expanded[col].apply(lambda x: isinstance(x, (dict, list))).any():
-                df_ai_expanded[col] = df_ai_expanded[col].apply(json.dumps)
-        st.dataframe(df_ai_expanded)
+        # Expand the JSON data
+        expanded_data = []
+        for _, row in df_ai.iterrows():
+            progress = json.loads(row['progress_json'])
+            progress['session_id'] = row['session_id']
+            progress['username'] = row['username']
+            progress['timestamp'] = row['timestamp']
+            expanded_data.append(progress)
+        
+        st.dataframe(pd.DataFrame(expanded_data))
     else:
         st.write("— no AI edit logs found —")
 
