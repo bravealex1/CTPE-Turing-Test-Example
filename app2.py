@@ -17,8 +17,8 @@ from streamlit_authenticator.utilities.hasher import Hasher
 # Load Reports from CSV (Normal & Abnormal)
 # --------------------------------------------------
 # Paths to the CSVs
-NORMAL_CSV = r"C:\Users\alexvanhalen\OneDrive\Desktop\Alex_turing_test_examples\normal_top_15.csv"
-ABNORMAL_CSV = r"C:\Users\alexvanhalen\OneDrive\Desktop\Alex_turing_test_examples\abnormal_top_15.csv"
+NORMAL_CSV = r"normal_top_15.csv"
+ABNORMAL_CSV = r"abnormal_top_15.csv"
 
 # Read both CSVs and combine
 if os.path.exists(NORMAL_CSV) and os.path.exists(ABNORMAL_CSV):
@@ -231,8 +231,8 @@ elif "page" not in st.session_state:
     st.session_state.page = "index"
 
 # ── ADAPTED: point to the folders containing normal & abnormal cases ──
-NORMAL_IMAGE_DIR   = r"C:\Users\alexvanhalen\OneDrive\Desktop\Alex_turing_test_examples\sampled_normal"
-ABNORMAL_IMAGE_DIR = r"C:\Users\alexvanhalen\OneDrive\Desktop\Alex_turing_test_examples\sampled_abnormal"
+NORMAL_IMAGE_DIR   = r"sampled_normal"
+ABNORMAL_IMAGE_DIR = r"sampled_abnormal"
 
 # Get list of case IDs from both directories
 cases_normal   = sorted([d for d in os.listdir(NORMAL_IMAGE_DIR)   if os.path.isdir(os.path.join(NORMAL_IMAGE_DIR, d))])
