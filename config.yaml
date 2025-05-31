@@ -42,9 +42,11 @@ credentials:
       email: tester10@example.com
       name: Tester Ten
       password: Password10!
+
 cookie:
   name: survey_app_cookie
   key: your-very-secret-key-goes-here
   expiry_days: 180
+
 preauthorized:
   emails: []
