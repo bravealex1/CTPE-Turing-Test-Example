@@ -225,7 +225,7 @@ elif "page" not in st.session_state:
     st.session_state.page = "index"
 
 # ── ADAPT THIS: point to your parent folder containing 123,456,789 ──
-BASE_IMAGE_DIR = "cases"
+BASE_IMAGE_DIR = "C:/Users/alexvanhalen/OneDrive/Desktop/Alex_turing_test_examples/cases"
 
 cases = sorted([
     d for d in os.listdir(BASE_IMAGE_DIR)
