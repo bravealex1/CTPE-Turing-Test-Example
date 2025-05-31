@@ -28,11 +28,18 @@ if "usernames" not in credentials:
     st.stop()
 
 try:
-    hashed_passwords = Hasher([user_data["password"] for user_data in credentials["usernames"].values()]).generate()
-    for i, username in enumerate(credentials["usernames"].keys()):
-        credentials["usernames"][username]["password"] = hashed_passwords[i]
+    # Check if passwords are already hashed (they contain '$' character typical of hashed passwords)
+    first_user = list(credentials["usernames"].values())[0]
+    if '$' not in first_user.get('password', ''):
+        # Passwords are not hashed, so hash them
+        passwords_list = [user_info['password'] for user_info in credentials["usernames"].values()]
+        hashed_passwords = Hasher(passwords_list).generate()
+        
+        # Update with hashed passwords
+        for i, username in enumerate(credentials["usernames"].keys()):
+            credentials["usernames"][username]["password"] = hashed_passwords[i]
 except Exception as e:
-    st.error(f"Password hashing failed: {e}")
+    st.error(f"Error processing passwords: {e}")
     st.stop()
 
 # --------------------------------------------------
