@@ -27,8 +27,13 @@ if "usernames" not in credentials:
     st.error("⚠️ 'usernames' key not found under 'credentials' in config.yaml")
     st.stop()
 
-# Hash all plaintext passwords in-place
-credentials["usernames"] = Hasher.hash_passwords(credentials["usernames"])
+try:
+    hashed_passwords = Hasher([user_data["password"] for user_data in credentials["usernames"].values()]).generate()
+    for i, username in enumerate(credentials["usernames"].keys()):
+        credentials["usernames"][username]["password"] = hashed_passwords[i]
+except Exception as e:
+    st.error(f"Password hashing failed: {e}")
+    st.stop()
 
 # --------------------------------------------------
 # 1. Authentication Setup (must be first in the script)
