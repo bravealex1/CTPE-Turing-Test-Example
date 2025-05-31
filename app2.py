@@ -27,19 +27,81 @@ if "usernames" not in credentials:
     st.error("⚠️ 'usernames' key not found under 'credentials' in config.yaml")
     st.stop()
 
-# Replace lines 30-31 with:
+# Check if passwords are properly hashed
 try:
-    # Check if passwords are already hashed (they contain '$' character typical of hashed passwords)
     first_user = list(credentials["usernames"].values())[0]
     if '$' not in first_user.get('password', ''):
-        # Passwords are not hashed, so hash them using the correct method
-        for username, user_info in credentials["usernames"].items():
-            plain_password = user_info['password']
-            # Hash individual password
-            hashed_password = Hasher([plain_password]).generate()[0]
-            credentials["usernames"][username]["password"] = hashed_password
+        st.error("⚠️ Passwords in config.yaml are not hashed. Please run the password hashing script first.")
+        st.info("Create a file called 'generate_hashes.py' and run it to generate hashed passwords.")
+        
+        # Show the password hashing script in an expandable section
+        with st.expander("Click to see the password hashing script"):
+            st.code('''
+import streamlit_authenticator as stauth
+
+# Your current passwords
+passwords = [
+    'Password1!', 'Password2!', 'Password3!', 'Password4!', 'Password5!',
+    'Password6!', 'Password7!', 'Password8!', 'Password9!', 'Password10!'
+]
+
+usernames = [
+    'tester1', 'tester2', 'tester3', 'tester4', 'tester5',
+    'tester6', 'tester7', 'tester8', 'tester9', 'tester10'
+]
+
+# Try different methods to hash passwords
+try:
+    # Method 1: Direct instantiation with passwords
+    hasher = stauth.Hasher(passwords)
+    hashed_passwords = hasher.generate()
+    print("Method 1 worked!")
+except:
+    try:
+        # Method 2: Empty constructor then hash method
+        hasher = stauth.Hasher()
+        hashed_passwords = hasher.hash(passwords)
+        print("Method 2 worked!")
+    except:
+        try:
+            # Method 3: Static method
+            user_dict = {}
+            for i, username in enumerate(usernames):
+                user_dict[username] = {
+                    'email': f'{username}@example.com',
+                    'name': f'Tester {username.replace("tester", "").title()}',
+                    'password': passwords[i]
+                }
+            hashed_dict = stauth.Hasher.hash_passwords(user_dict)
+            hashed_passwords = [hashed_dict[username]['password'] for username in usernames]
+            print("Method 3 worked!")
+        except Exception as e:
+            print(f"All methods failed: {e}")
+            exit()
+
+# Print the results
+print("\\nHashed passwords:")
+print("Copy these into your config.yaml file:")
+print()
+
+for username, hashed_pwd in zip(usernames, hashed_passwords):
+    print(f"    {username}:")
+    print(f"      email: {username}@example.com")
+    print(f"      name: Tester {username.replace('tester', '').title()}")
+    print(f"      password: '{hashed_pwd}'")
+    print()
+            ''', language='python')
+        
+        st.info("1. Copy the above code into a file called 'generate_hashes.py'")
+        st.info("2. Run: python generate_hashes.py")
+        st.info("3. Copy the output into your config.yaml file")
+        st.info("4. Refresh this app")
+        st.stop()
+    else:
+        st.success("✅ Passwords are properly hashed")
+        
 except Exception as e:
-    st.error(f"Error processing passwords: {e}")
+    st.error(f"Error checking password format: {e}")
     st.stop()
 
 # --------------------------------------------------
