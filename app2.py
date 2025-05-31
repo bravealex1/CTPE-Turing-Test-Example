@@ -28,7 +28,7 @@ if "usernames" not in credentials:
     st.stop()
 
 # Hash all plaintext passwords in-place
-credentials["usernames"] = Hasher.hash_passwords(credentials["usernames"])
+credentials["usernames"] = Hasher.hash_passwords(credentials["username"])
 
 # --------------------------------------------------
 # 1. Authentication Setup (must be first in the script)
