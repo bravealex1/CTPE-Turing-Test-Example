@@ -27,17 +27,17 @@ if "usernames" not in credentials:
     st.error("⚠️ 'usernames' key not found under 'credentials' in config.yaml")
     st.stop()
 
+# Replace lines 30-31 with:
 try:
     # Check if passwords are already hashed (they contain '$' character typical of hashed passwords)
     first_user = list(credentials["usernames"].values())[0]
     if '$' not in first_user.get('password', ''):
-        # Passwords are not hashed, so hash them
-        passwords_list = [user_info['password'] for user_info in credentials["usernames"].values()]
-        hashed_passwords = Hasher(passwords_list).generate()
-        
-        # Update with hashed passwords
-        for i, username in enumerate(credentials["usernames"].keys()):
-            credentials["usernames"][username]["password"] = hashed_passwords[i]
+        # Passwords are not hashed, so hash them using the correct method
+        for username, user_info in credentials["usernames"].items():
+            plain_password = user_info['password']
+            # Hash individual password
+            hashed_password = Hasher([plain_password]).generate()[0]
+            credentials["usernames"][username]["password"] = hashed_password
 except Exception as e:
     st.error(f"Error processing passwords: {e}")
     st.stop()
