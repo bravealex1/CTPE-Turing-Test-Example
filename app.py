@@ -309,69 +309,96 @@ def index():
         st.experimental_set_query_params(page="view_results"); st.session_state.page="view_results"; st.rerun()
 
 def turing_test():
-    idx = st.session_state.last_case_turing
+    # initialize index
+    idx = st.session_state.get("last_case_turing", 0)
+
+    # all done?
     if idx >= total_cases:
         st.success("Turing Test complete!")
         if st.button("Home"):
-            st.session_state.page="index"; st.experimental_set_query_params(page="index"); st.rerun()
+            st.session_state.page = "index"
+            st.experimental_set_query_params(page="index")
+            st.rerun()
         return
+
+    # ── ENSURE RANDOM A/B ASSIGNMENTS PER CASE ──
+    assigns = st.session_state.get("assignments_turing", {})
+    for cid in cases:
+        if cid not in assigns:
+            assigns[cid] = random.choice([True, False])
+    st.session_state.assignments_turing = assigns
+
     case = cases[idx]
+
+    # header & back button
     st.header(f"Turing Test: {case} ({idx+1}/{total_cases})")
-
     if st.button("Save & Back"):
-        st.session_state.page="index"; st.experimental_set_query_params(page="index"); st.rerun()
+        st.session_state.page = "index"
+        st.experimental_set_query_params(page="index")
+        st.rerun()
 
-    # ── MODIFIED: load from CSV, fallback to files ──
+    # ── LOAD REPORT TEXT ──
     reports = report_dict.get(case, {})
     gt_report  = reports.get("gt",  load_text(os.path.join(BASE_IMAGE_DIR, case, "text.txt")))
     gen_report = reports.get("gen", load_text(os.path.join(BASE_IMAGE_DIR, case, "pred.txt")))
 
-    assigns = st.session_state.assignments_turing
-    if case not in assigns:
-        assigns[case] = random.choice([True, False])
-        st.session_state.assignments_turing = assigns
+    # ── ASSIGN A vs B ──
     if assigns[case]:
-        A, B = gen_report, gt_report
-    else:
         A, B = gt_report, gen_report
+    else:
+        A, B = gen_report, gt_report
 
     st.subheader("Report A")
     st.text_area("A", A, height=200, key=f"A_t_{case}")
     st.subheader("Report B")
     st.text_area("B", B, height=200, key=f"B_t_{case}")
 
-    if st.session_state.initial_eval_turing is None:
-        choice = st.radio("Which is ground truth?", ["A","B","Not sure"], key=f"ch_t_{case}", index=2)
-        if st.button("Submit Initial"):
+    # ── INITIAL EVAL ──
+    if st.session_state.get("initial_eval_turing") is None:
+        choice = st.radio(
+            "Which is ground truth?",
+            ["A", "B", "Not sure"],
+            key=f"ch_t_{case}",
+            index=2
+        )
+        if st.button("Submit Initial Evaluation"):
             st.session_state.initial_eval_turing = choice
             st.session_state.viewed_images_turing = True
             st.success("Recorded initial eval.")
             st.rerun()
 
-    if st.session_state.viewed_images_turing:
+    # ── SHOW IMAGES & FINAL EVAL ──
+    if st.session_state.get("viewed_images_turing", False):
         st.markdown("#### Images")
         display_carousel("turing", case)
+
         st.markdown(f"**Initial Eval:** {st.session_state.initial_eval_turing}")
-        up = st.radio("Keep or Update?", ["Keep","Update"], key=f"up_t_{case}")
+        up = st.radio("Keep or Update?", ["Keep", "Update"], key=f"up_t_{case}")
         final = st.session_state.initial_eval_turing
         if up == "Update":
-            final = st.radio("New choice:", ["A","B","Not sure"], key=f"new_t_{case}", index=2)
+            final = st.radio(
+                "New choice:",
+                ["A", "B", "Not sure"],
+                key=f"new_t_{case}",
+                index=2
+            )
         st.session_state.final_eval_turing = final
 
         if st.button("Finalize & Next"):
             prog = {
-                "case_id": case,
-                "last_case": idx,
-                "assignments": st.session_state.assignments_turing,
-                "initial_eval": st.session_state.initial_eval_turing,
-                "final_eval": st.session_state.final_eval_turing,
+                "case_id":       case,
+                "last_case":     idx,
+                "assignments":   st.session_state.assignments_turing,
+                "initial_eval":  st.session_state.initial_eval_turing,
+                "final_eval":    st.session_state.final_eval_turing,
                 "viewed_images": st.session_state.viewed_images_turing
             }
             save_progress("turing_test", prog)
-            st.session_state.last_case_turing += 1
-            st.session_state.current_slice_turing = 0
-            st.session_state.initial_eval_turing = None
-            st.session_state.final_eval_turing   = None
+
+            # advance
+            st.session_state.last_case_turing    = idx + 1
+            st.session_state.initial_eval_turing  = None
+            st.session_state.final_eval_turing    = None
             st.session_state.viewed_images_turing = False
             st.rerun()
 
