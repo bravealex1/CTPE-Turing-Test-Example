@@ -121,14 +121,13 @@ def init_db():
       progress_json TEXT,
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
-    ''')  # :contentReference[oaicite:4]{index=4}
+    ''')
 
     # 2) Check if 'username' column truly exists; if not, add it.
-    #    Query current schema:
     c.execute("PRAGMA table_info(progress_logs)")
-    cols = [row[1] for row in c.fetchall()]  # row[1] is the column name :contentReference[oaicite:5]{index=5}
+    cols = [row[1] for row in c.fetchall()]  # row[1] is the column name
     if "username" not in cols:
-        c.execute("ALTER TABLE progress_logs ADD COLUMN username TEXT")  # :contentReference[oaicite:6]{index=6}
+        c.execute("ALTER TABLE progress_logs ADD COLUMN username TEXT")
 
     # 3) Create annotations table (unchanged)
     c.execute('''
@@ -332,6 +331,11 @@ elif "page" not in st.session_state:
 NORMAL_IMAGE_DIR   = r"sampled_normal"
 ABNORMAL_IMAGE_DIR = r"sampled_abnormal"
 
+# Ensure those directories exist
+if not os.path.isdir(NORMAL_IMAGE_DIR) or not os.path.isdir(ABNORMAL_IMAGE_DIR):
+    st.error(f"Image directories not found: {NORMAL_IMAGE_DIR} / {ABNORMAL_IMAGE_DIR}")
+    st.stop()
+
 # Get list of case IDs from both directories
 cases_normal   = sorted([d for d in os.listdir(NORMAL_IMAGE_DIR)   if os.path.isdir(os.path.join(NORMAL_IMAGE_DIR, d))])
 cases_abnormal = sorted([d for d in os.listdir(ABNORMAL_IMAGE_DIR) if os.path.isdir(os.path.join(ABNORMAL_IMAGE_DIR, d))])
@@ -345,62 +349,59 @@ def load_text(path):
     return open(path, "r", encoding="utf-8").read() if os.path.exists(path) else ""
 
 def display_carousel(category, case_id):
-    key = f"current_slice_{category}"
+    """
+    Display a slider-based carousel showing only “lung” and “soft tissue” images.
+    """
+    key = f"current_slice_{category}_{case_id}"
     # Determine which base folder this case lives in
     if case_id in cases_normal:
         base_dir = NORMAL_IMAGE_DIR
     else:
         base_dir = ABNORMAL_IMAGE_DIR
 
-    bone_folder = os.path.join(base_dir, case_id, "bone")
+    # Define lung & soft tissue folders
     lung_folder = os.path.join(base_dir, case_id, "lung")
     soft_folder = os.path.join(base_dir, case_id, "soft")
 
-    bone_imgs = sorted([
-        os.path.join(bone_folder, f)
-        for f in os.listdir(bone_folder)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
-    ]) if os.path.exists(bone_folder) else []
     lung_imgs = sorted([
         os.path.join(lung_folder, f)
         for f in os.listdir(lung_folder)
         if f.lower().endswith((".png", ".jpg", ".jpeg"))
     ]) if os.path.exists(lung_folder) else []
+
     soft_imgs = sorted([
         os.path.join(soft_folder, f)
         for f in os.listdir(soft_folder)
         if f.lower().endswith((".png", ".jpg", ".jpeg"))
     ]) if os.path.exists(soft_folder) else []
 
-    max_slices = max(len(bone_imgs), len(lung_imgs), len(soft_imgs), 1)
-    idx = st.session_state.get(key, 0)
-    idx = max(0, min(idx, max_slices - 1))
-    st.session_state[key] = idx
+    max_slices = max(len(lung_imgs), len(soft_imgs), 1)
+    # Use a slider to pick the slice index; starts at 0
+    idx = st.slider(
+        "Slice index",
+        min_value=0,
+        max_value=max_slices - 1,
+        value=st.session_state.get(key, 0),
+        key=key
+    )
 
-    c_prev, c1, c2, c3, c_next = st.columns([1, 3, 3, 3, 1])
-    with c_prev:
-        if st.button("⟨ Prev", key=f"prev_{category}_{case_id}") and idx > 0:
-            st.session_state[key] = idx - 1
-            st.rerun()
+    # Display side-by-side columns for lung & soft tissue
+    c1, c2 = st.columns(2)
     with c1:
-        if bone_imgs:
-            st.image(bone_imgs[idx], caption="Bone", use_column_width=True)
-        else:
-            st.info("No bone images.")
-    with c2:
         if lung_imgs:
-            st.image(lung_imgs[idx], caption="Lung", use_column_width=True)
+            # If idx >= len(lung_imgs), show the last available image
+            i = min(idx, len(lung_imgs) - 1)
+            st.image(lung_imgs[i], caption="Lung", use_column_width=True)
         else:
-            st.info("No lung images.")
-    with c3:
+            st.info("No lung images available.")
+
+    with c2:
         if soft_imgs:
-            st.image(soft_imgs[idx], caption="Soft Tissue", use_column_width=True)
+            # If idx >= len(soft_imgs), show the last available image
+            i = min(idx, len(soft_imgs) - 1)
+            st.image(soft_imgs[i], caption="Soft Tissue", use_column_width=True)
         else:
-            st.info("No soft-tissue images.")
-    with c_next:
-        if st.button("Next ⟩", key=f"next_{category}_{case_id}") and idx < max_slices - 1:
-            st.session_state[key] = idx + 1
-            st.rerun()
+            st.info("No soft-tissue images available.")
 
 # --------------------------------------------------
 # 8. Pages
