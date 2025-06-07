@@ -29,7 +29,7 @@ if os.path.exists(NORMAL_CSV) and os.path.exists(ABNORMAL_CSV):
     report_dict = {
         str(row["id"]): {
             "gt": row["gt"],
-            "gen": row["generated_output"]
+            "gen": row["parsed_output"]
         }
         for _, row in df_reports.iterrows()
     }
