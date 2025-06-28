@@ -23,4 +23,5 @@ ENV STREAMLIT_SERVER_HEADLESS true
 
 
 # Run the app when the container launches
-CMD ["streamlit", "run", "cpte_app3.py", "--server.address=0.0.0.0"] 
+# Use ENTRYPOINT for a more robust declaration of the container's executable
+ENTRYPOINT ["streamlit", "run", "cpte_app3.py", "--server.port=8501", "--server.address=0.0.0.0"] 
