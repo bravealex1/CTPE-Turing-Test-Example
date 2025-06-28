@@ -27,18 +27,12 @@ COPY --chown=appuser:appgroup . .
 # 7. Switch to the non-root user
 USER appuser
 
-# 8. Expose Streamlit's default port
+# 8. Expose Streamlit’s default port
 EXPOSE 8501
 
-# 9. Entrypoint script that creates secrets.toml from environment variables
-#    before launching the Streamlit application.
+# 9. Entrypoint using bash so $PORT can be injected by platforms like Koyeb
 ENTRYPOINT ["bash", "-c", "\
-    mkdir -p /app/.streamlit && \
-    echo '[postgres]' > /app/.streamlit/secrets.toml && \
-    echo 'host=\"$DB_HOST\"' >> /app/.streamlit/secrets.toml && \
-    echo 'port=$DB_PORT' >> /app/.streamlit/secrets.toml && \
-    echo 'dbname=\"$DB_NAME\"' >> /app/.streamlit/secrets.toml && \
-    echo 'user=\"$DB_USER\"' >> /app/.streamlit/secrets.toml && \
-    echo 'password=\"$DB_PASS\"' >> /app/.streamlit/secrets.toml && \
-    streamlit run cpte_app3.py --server.address=0.0.0.0 --server.port=${PORT:-8501} \
+    streamlit run cpte_app3.py \
+      --server.address=0.0.0.0 \
+      --server.port ${PORT:-8501} \
 "]
