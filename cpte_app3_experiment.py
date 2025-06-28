@@ -101,9 +101,13 @@ if not authentication_status:
 # 0. Database Setup for Queryable Logs
 # --------------------------------------------------
 def get_db_connection():
-    # Use Streamlit secrets to get database credentials
-    conn = psycopg2.connect(**st.secrets["postgres"])
-    return conn
+    # Check if DATABASE_URL is set in the environment (for Koyeb deployment)
+    if "DATABASE_URL" in os.environ:
+        return psycopg2.connect(os.environ["DATABASE_URL"])
+    
+    # Fallback to Streamlit secrets for local development
+    else:
+        return psycopg2.connect(**st.secrets["postgres"])
 
 def init_db():
     conn = get_db_connection()
