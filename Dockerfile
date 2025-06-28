@@ -32,7 +32,7 @@ EXPOSE 8501
 
 # 9. Entrypoint using bash so $PORT can be injected by platforms like Koyeb
 ENTRYPOINT ["bash", "-c", "\
-    streamlit run cpte_app3.py \
+    streamlit run cpte_app3_experiment.py \
       --server.address=0.0.0.0 \
       --server.port ${PORT:-8501} \
 "]
