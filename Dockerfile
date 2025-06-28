@@ -1,27 +1,38 @@
-# Use an official Python runtime as a parent image
-FROM python:3.9-slim
+# 1. Use an explicit Debian-based slim image
+FROM python:3.9-slim-buster
 
-# Set the working directory in the container
+# 2. Create & switch to a non-root user for better security
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
+
+# 3. Set working directory
 WORKDIR /app
 
-# Copy the requirements file into the container at /app
+# 4. Streamline Python & pip behavior
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    STREAMLIT_SERVER_HEADLESS=true
+
+# 5. Install Python dependencies (leveraging Docker cache)
 COPY requirements.txt .
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y build-essential && \
+    pip install -r requirements.txt && \
+    apt-get purge -y --auto-remove build-essential && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# 6. Copy application code and set proper ownership
+COPY --chown=appuser:appgroup . .
 
-# Copy the rest of the application's code into the container at /app
-# This includes the app script, data files, and image directories.
-COPY . .
+# 7. Switch to the non-root user
+USER appuser
 
-# Make port 8501 available to the world outside this container
+# 8. Expose Streamlit’s default port
 EXPOSE 8501
 
-# Define environment variable to tell Streamlit to run on port 8501
-ENV STREAMLIT_SERVER_PORT 8501
-ENV STREAMLIT_SERVER_HEADLESS true
-
-
-# Run the app when the container launches
-# Use ENTRYPOINT for a more robust declaration of the container's executable
-ENTRYPOINT ["streamlit", "run", "cpte_app3.py", "--server.port=8501", "--server.address=0.0.0.0"] 
+# 9. Entrypoint using bash so $PORT can be injected by platforms like Koyeb
+ENTRYPOINT ["bash", "-c", "\
+    streamlit run cpte_app3.py \
+      --server.address=0.0.0.0 \
+      --server.port ${PORT:-8501} \
+"]
