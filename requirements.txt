@@ -1,2 +1,6 @@
 streamlit>=1.0.0
 streamlit-authenticator==0.4.2
+pandas
+PyYAML
+numpy
+psycopg2-binary

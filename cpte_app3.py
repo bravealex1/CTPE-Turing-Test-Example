@@ -5,7 +5,7 @@ import json
 import uuid
 import random
 import pandas as pd
-import sqlite3
+import psycopg2
 from datetime import datetime
 
 import streamlit_authenticator as stauth
@@ -100,46 +100,38 @@ if not authentication_status:
 # --------------------------------------------------
 # 0. Database Setup for Queryable Logs
 # --------------------------------------------------
-DB_DIR  = "logs"
-DB_PATH = os.path.join(DB_DIR, "logs.db")
-
 def get_db_connection():
-    os.makedirs(DB_DIR, exist_ok=True)
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+    # Use Streamlit secrets to get database credentials
+    conn = psycopg2.connect(**st.secrets["postgres"])
+    return conn
 
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
 
-    # 1) Create progress_logs if it doesn't exist (with username column included)
+    # 1) Create progress_logs if it doesn't exist (PostgreSQL syntax)
     c.execute('''
     CREATE TABLE IF NOT EXISTS progress_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       session_id TEXT,
       username TEXT,
       category TEXT,
       progress_json TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )
     ''')
 
-    # 2) Check if 'username' column truly exists; if not, add it.
-    c.execute("PRAGMA table_info(progress_logs)")
-    cols = [row[1] for row in c.fetchall()]  # row[1] is the column name
-    if "username" not in cols:
-        c.execute("ALTER TABLE progress_logs ADD COLUMN username TEXT")
-
-    # 3) Create annotations table (unchanged)
+    # 2) Create annotations table (PostgreSQL syntax)
     c.execute('''
     CREATE TABLE IF NOT EXISTS annotations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       case_id TEXT,
       annotations_json TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )
     ''')
 
-    # 4) Create user_progress table (unchanged)
+    # 3) Create user_progress table (PostgreSQL syntax)
     c.execute('''
     CREATE TABLE IF NOT EXISTS user_progress (
       username TEXT PRIMARY KEY,
@@ -152,18 +144,18 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Initialize the database (will add missing 'username' column if needed)
+# Initialize the database
 init_db()
 
 # --------------------------------------------------
-# Helper: Prevent Duplicate SQLite Inserts
+# Helper: Prevent Duplicate Inserts (PostgreSQL version)
 # --------------------------------------------------
 def should_log(session_id: str, category: str, new_progress: dict) -> bool:
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
         "SELECT progress_json FROM progress_logs "
-        "WHERE session_id=? AND category=? "
+        "WHERE session_id=%s AND category=%s "
         "ORDER BY timestamp DESC LIMIT 1",
         (session_id, category)
     )
@@ -198,33 +190,11 @@ def save_progress(category: str, progress: dict):
     if not should_log(sid, category, progress):
         return
 
-    os.makedirs(DB_DIR, exist_ok=True)
-
-    # Save JSON file
-    jpath = os.path.join(DB_DIR, f"{category}_{sid}_progress.json")
-    if os.path.exists(jpath):
-        with open(jpath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            data = data if isinstance(data, list) else [data]
-    else:
-        data = []
-    data.append(progress)
-    with open(jpath, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
-    # Save CSV file
-    cpath = os.path.join(DB_DIR, f"{category}_{sid}_progress.csv")
-    df = pd.DataFrame([progress])
-    if os.path.exists(cpath):
-        df.to_csv(cpath, index=False, mode="a", header=False)
-    else:
-        df.to_csv(cpath, index=False)
-
-    # Save to SQLite
+    # Save to Database (PostgreSQL)
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO progress_logs(session_id, username, category, progress_json) VALUES (?, ?, ?, ?)",
+        "INSERT INTO progress_logs(session_id, username, category, progress_json) VALUES (%s, %s, %s, %s)",
         (sid, username, category, json.dumps(progress))
     )
     conn.commit()
@@ -234,22 +204,11 @@ def save_progress(category: str, progress: dict):
 # 4. Utility: Save Annotations per Case
 # --------------------------------------------------
 def save_annotations(case_id: str, annotations: list):
-    os.makedirs("evaluations", exist_ok=True)
-    path = os.path.join("evaluations", f"{case_id}_annotations.json")
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            data = data if isinstance(data, list) else [data]
-    else:
-        data = []
-    data.extend(annotations)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-
+    # Save to Database (PostgreSQL)
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO annotations(case_id, annotations_json) VALUES (?, ?)",
+        "INSERT INTO annotations(case_id, annotations_json) VALUES (%s, %s)",
         (case_id, json.dumps(annotations))
     )
     conn.commit()
@@ -268,7 +227,7 @@ def load_user_progress():
     c = conn.cursor()
     c.execute(
         "SELECT last_case_turing, last_case_standard, last_case_ai "
-        "FROM user_progress WHERE username = ?",
+        "FROM user_progress WHERE username = %s",
         (username,)
     )
     row = c.fetchone()
@@ -287,10 +246,17 @@ def load_user_progress():
 def save_user_progress():
     conn = get_db_connection()
     c = conn.cursor()
+    # Use "ON CONFLICT" for PostgreSQL to handle updates
     c.execute(
-        "REPLACE INTO user_progress (username, last_case_turing, last_case_standard, last_case_ai) "
-        "VALUES (?, ?, ?, ?)",
-        (username, 
+        """
+        INSERT INTO user_progress (username, last_case_turing, last_case_standard, last_case_ai)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (username) DO UPDATE SET
+            last_case_turing = EXCLUDED.last_case_turing,
+            last_case_standard = EXCLUDED.last_case_standard,
+            last_case_ai = EXCLUDED.last_case_ai
+        """,
+        (username,
          st.session_state.last_case_turing,
          st.session_state.last_case_standard,
          st.session_state.last_case_ai)
@@ -350,7 +316,7 @@ def load_text(path):
 
 def display_carousel(category, case_id):
     """
-    Display a slider-based carousel showing only “lung” and “soft tissue” images.
+    Display a slider-based carousel showing only "lung" and "soft tissue" images.
     """
     key = f"current_slice_{category}_{case_id}"
     # Determine which base folder this case lives in
@@ -674,7 +640,7 @@ def view_all_results():
     ]:
         st.subheader(label)
         df = pd.read_sql_query(
-            "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category=? ORDER BY timestamp",
+            "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category=%s ORDER BY timestamp",
             conn, params=(cat,)
         )
         if not df.empty:
