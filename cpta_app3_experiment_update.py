@@ -332,23 +332,29 @@ def display_carousel(category, case_id):
                 if f.lower().endswith((".png", ".jpg", ".jpeg"))
             ])
 
-        max_slices = max(len(lung_imgs), len(soft_imgs), 1)
+        # Calculate max slices between both image sets
+        max_slices = max(len(lung_imgs), len(soft_imgs))
         
         if max_slices == 0:
             st.info("No images available for this case.")
             return
-
-        idx = st.slider(
-            "Slice index",
-            0,
-            max_slices - 1,
-            st.session_state.get(key, 0),
-            key=key
-        )
+            
+        # Only show slider if there are multiple slices
+        if max_slices > 1:
+            idx = st.slider(
+                "Slice index",
+                0,
+                max_slices - 1,
+                st.session_state.get(key, 0),
+                key=key
+            )
+        else:
+            idx = 0
 
         c1, c2 = st.columns(2)
         with c1:
             if lung_imgs:
+                # If idx >= len(lung_imgs), show the last available image
                 i = min(idx, len(lung_imgs) - 1)
                 st.image(lung_imgs[i], caption="Lung", use_column_width=True)
             else:
@@ -356,6 +362,7 @@ def display_carousel(category, case_id):
 
         with c2:
             if soft_imgs:
+                # If idx >= len(soft_imgs), show the last available image
                 i = min(idx, len(soft_imgs) - 1)
                 st.image(soft_imgs[i], caption="Soft Tissue", use_column_width=True)
             else:
@@ -407,8 +414,12 @@ def turing_test():
             return
         
         case = cases[idx]
-        st.header(f"Turing Test: {case} ({idx + 1}/{total_cases})")
-        st.info("Evaluate two radiology reports to determine which is the original 'Ground-truth' report.")
+        st.header(f"Turing Test: Case {idx + 1}/{total_cases}")
+        st.info("""
+        You will evaluate two radiology reports, Report A and Report B. 
+        One is a clinician's interpretation (ground truth), the other is AI-generated.
+        Your task is to determine which report is the human-generated one.
+        """)
 
         if st.button("Save & Back"):
             st.session_state.page = "index"
@@ -425,19 +436,19 @@ def turing_test():
             st.session_state.assignments_turing = assigns
         
         if assigns[case]:
-            report_label_A, report_label_B = "AI-Generated", "Ground-truth"
+            # Report A is generated, Report B is ground truth
             A, B = gen_report, gt_report
         else:
-            report_label_A, report_label_B = "Ground-truth", "AI-Generated"
+            # Report A is ground truth, Report B is generated
             A, B = gt_report, gen_report
 
-        st.subheader(f"Report A ({report_label_A})")
+        st.subheader("Report A")
         st.text_area("A", A, height=300, key=f"A_t_{case}", label_visibility="collapsed")
-        st.subheader(f"Report B ({report_label_B})")
+        st.subheader("Report B")
         st.text_area("B", B, height=300, key=f"B_t_{case}", label_visibility="collapsed")
 
         if st.session_state.initial_eval_turing is None:
-            choice = st.radio("Which is ground truth?", ["A", "B", "Not sure"], index=2, key=f"ch_t_{case}")
+            choice = st.radio("Which report is human-generated?", ["A", "B", "Not sure"], index=2, key=f"ch_t_{case}")
             if st.button("Submit initial evaluation"):
                 st.session_state.initial_eval_turing = choice
                 st.session_state.viewed_images_turing = True
