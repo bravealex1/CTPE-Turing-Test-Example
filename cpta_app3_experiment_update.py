@@ -141,6 +141,12 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )''')
         
+        # Add username column if it doesn't exist
+        c.execute("PRAGMA table_info(progress_logs)")
+        columns = [col[1] for col in c.fetchall()]
+        if 'username' not in columns:
+            c.execute("ALTER TABLE progress_logs ADD COLUMN username TEXT")
+        
         c.execute('''
         CREATE TABLE IF NOT EXISTS annotations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -430,8 +436,11 @@ def turing_test():
         gt_report = reports.get("gt", "Ground-truth report not found.")
         gen_report = reports.get("gen", "Generated report not found.")
 
+        # Random assignment: 50/50 chance for each configuration
         assigns = st.session_state.assignments_turing
         if case not in assigns:
+            # True: A is AI-generated, B is ground truth
+            # False: A is ground truth, B is AI-generated
             assigns[case] = random.choice([True, False])
             st.session_state.assignments_turing = assigns
         
@@ -506,7 +515,7 @@ def evaluate_case():
             return
         
         case = cases[idx]
-        st.header(f"Standard Eval: {case} ({idx + 1}/{total_cases})")
+        st.header(f"Standard Eval: Case {idx + 1}/{total_cases}")
 
         if st.button("Save & Back"):
             st.session_state.page = "index"
@@ -517,8 +526,11 @@ def evaluate_case():
         gt_report = reports.get("gt", "Ground-truth report not found.")
         gen_report = reports.get("gen", "Generated report not found.")
 
+        # Random assignment: 50/50 chance for each configuration
         assigns = st.session_state.assignments_standard
         if case not in assigns:
+            # True: A is AI-generated, B is ground truth
+            # False: A is ground truth, B is AI-generated
             assigns[case] = random.choice([True, False])
             st.session_state.assignments_standard = assigns
         
@@ -586,7 +598,7 @@ def ai_edit():
             return
         
         case = cases[idx]
-        st.header(f"AI Edit: {case} ({idx + 1}/{total_cases})")
+        st.header(f"AI Edit: Case {idx + 1}/{total_cases}")
 
         if st.button("Save & Back"):
             save_progress("ai_edit", {
