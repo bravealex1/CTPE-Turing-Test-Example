@@ -55,7 +55,7 @@ def setup_authentication():
     try:
         if not os.path.exists("config.yaml"):
             passwords = Hasher(['pass1', 'pass2', 'pass3', 'pass4', 'pass5',
-                               'pass6', 'pass7', 'pass8', 'pass9', 'pass10']).generate()
+                               'pass6', 'pass7', 'pass8', 'pass9', 'pass10', 'pass11', 'pass12', 'pass13', 'pass14', 'pass15', 'pass16', 'pass17', 'pass18', 'pass19', 'pass20']).generate()
             
             config = {
                 'credentials': {
