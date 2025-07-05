@@ -49,26 +49,30 @@ def load_reports():
 report_dict, cases, total_cases = load_reports()
 
 # --------------------------------------------------
-# 0. Authentication Setup
+# 0. Authentication Setup (Fixed for 20 users)
 # --------------------------------------------------
 def setup_authentication():
     try:
         if not os.path.exists("config.yaml"):
-            passwords = Hasher(['pass1', 'pass2', 'pass3', 'pass4', 'pass5',
-                               'pass6', 'pass7', 'pass8', 'pass9', 'pass10', 'pass11', 'pass12', 'pass13', 'pass14', 'pass15', 'pass16', 'pass17', 'pass18', 'pass19', 'pass20']).generate()
+            # Create 20 test users with hashed passwords
+            plain_passwords = [f'pass{i+1}' for i in range(20)]
+            hashed_passwords = Hasher(plain_passwords).generate()
+            
+            credentials_dict = {}
+            for i in range(20):
+                username = f'tester{i+1}'
+                credentials_dict[username] = {
+                    'email': f'{username}@example.com',
+                    'name': f'Test User {i+1}',
+                    'password': hashed_passwords[i]
+                }
             
             config = {
                 'credentials': {
-                    'usernames': {
-                        f'tester{i+1}': {
-                            'email': f'tester{i+1}@example.com',
-                            'name': f'Test User {i+1}',
-                            'password': pwd
-                        } for i, pwd in enumerate(passwords)
-                    }
+                    'usernames': credentials_dict
                 },
                 'cookie': {
-                    'expiry_days': 30,
+                    'expiry_days': 180,
                     'key': 'your_cookie_key',
                     'name': 'auth_cookie'
                 },
