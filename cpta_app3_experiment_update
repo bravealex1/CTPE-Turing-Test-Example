@@ -100,55 +100,90 @@ if not authentication_status:
     st.stop()
 
 # --------------------------------------------------
-# 0. Database Setup for Queryable Logs
+# 0. Database Setup for Queryable Logs - FIXED
 # --------------------------------------------------
 def get_db_connection():
-    # Check if DATABASE_URL is set in the environment (for Koyeb deployment)
+    # Attempt 1: Environment variable
     if "DATABASE_URL" in os.environ:
-        return psycopg2.connect(os.environ["DATABASE_URL"])
+        try:
+            return psycopg2.connect(os.environ["DATABASE_URL"])
+        except Exception as e:
+            st.error(f"Error connecting via DATABASE_URL: {str(e)}")
     
-    # Fallback to Streamlit secrets for local development
-    else:
-        return psycopg2.connect(**st.secrets["postgres"])
+    # Attempt 2: Streamlit secrets
+    try:
+        if "postgres" in st.secrets:
+            return psycopg2.connect(**st.secrets["postgres"])
+    except KeyError:
+        pass  # Handled in error message below
+    except Exception as e:
+        st.error(f"Error connecting via secrets: {str(e)}")
+    
+    # Attempt 3: Local development defaults
+    try:
+        return psycopg2.connect(
+            dbname="postgres",
+            user="postgres",
+            password="postgres",
+            host="localhost",
+            port="5432"
+        )
+    except Exception as e:
+        st.error(f"Error connecting with local defaults: {str(e)}")
+    
+    # Final fallback
+    st.error("""
+    **Database connection failed.** 
+    Please configure one of:
+    1. DATABASE_URL environment variable
+    2. Streamlit secrets (postgres)
+    3. Local PostgreSQL instance with default credentials
+    """)
+    st.stop()
 
 def init_db():
-    conn = get_db_connection()
-    c = conn.cursor()
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
 
-    # 1) Create progress_logs if it doesn't exist (PostgreSQL syntax)
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS progress_logs (
-      id SERIAL PRIMARY KEY,
-      session_id TEXT,
-      username TEXT,
-      category TEXT,
-      progress_json TEXT,
-      timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
+        # 1) Create progress_logs if it doesn't exist (PostgreSQL syntax)
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS progress_logs (
+          id SERIAL PRIMARY KEY,
+          session_id TEXT,
+          username TEXT,
+          category TEXT,
+          progress_json TEXT,
+          timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
 
-    # 2) Create annotations table (PostgreSQL syntax)
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS annotations (
-      id SERIAL PRIMARY KEY,
-      case_id TEXT,
-      annotations_json TEXT,
-      timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    )
-    ''')
+        # 2) Create annotations table (PostgreSQL syntax)
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS annotations (
+          id SERIAL PRIMARY KEY,
+          case_id TEXT,
+          annotations_json TEXT,
+          timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        )
+        ''')
 
-    # 3) Create user_progress table (PostgreSQL syntax)
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS user_progress (
-      username TEXT PRIMARY KEY,
-      last_case_turing INTEGER DEFAULT 0,
-      last_case_standard INTEGER DEFAULT 0,
-      last_case_ai INTEGER DEFAULT 0
-    )
-    ''')
+        # 3) Create user_progress table (PostgreSQL syntax)
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS user_progress (
+          username TEXT PRIMARY KEY,
+          last_case_turing INTEGER DEFAULT 0,
+          last_case_standard INTEGER DEFAULT 0,
+          last_case_ai INTEGER DEFAULT 0
+        )
+        ''')
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
+        st.success("Database initialized successfully")
+    except Exception as e:
+        st.error(f"Database initialization failed: {str(e)}")
+        st.stop()
 
 # Initialize the database
 init_db()
@@ -157,24 +192,27 @@ init_db()
 # Helper: Prevent Duplicate Inserts (PostgreSQL version)
 # --------------------------------------------------
 def should_log(session_id: str, category: str, new_progress: dict) -> bool:
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(
-        "SELECT progress_json FROM progress_logs "
-        "WHERE session_id=%s AND category=%s "
-        "ORDER BY timestamp DESC LIMIT 1",
-        (session_id, category)
-    )
-    row = c.fetchone()
-    conn.close()
-    if not row:
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute(
+            "SELECT progress_json FROM progress_logs "
+            "WHERE session_id=%s AND category=%s "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (session_id, category)
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return True
+        last = json.loads(row[0])
+        if "last_case" in new_progress:
+            return last.get("last_case") != new_progress.get("last_case")
+        if category == "ai_edit" and "case_id" in new_progress:
+            return last.get("case_id") != new_progress.get("case_id")
         return True
-    last = json.loads(row[0])
-    if "last_case" in new_progress:
-        return last.get("last_case") != new_progress.get("last_case")
-    if category == "ai_edit" and "case_id" in new_progress:
-        return last.get("case_id") != new_progress.get("case_id")
-    return True
+    except Exception:
+        return True  # Always log if there's an error
 
 # --------------------------------------------------
 # 1. Generate & Store Unique Session ID
@@ -197,28 +235,34 @@ def save_progress(category: str, progress: dict):
         return
 
     # Save to Database (PostgreSQL)
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO progress_logs(session_id, username, category, progress_json) VALUES (%s, %s, %s, %s)",
-        (sid, username, category, json.dumps(progress))
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO progress_logs(session_id, username, category, progress_json) VALUES (%s, %s, %s, %s)",
+            (sid, username, category, json.dumps(progress))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        st.error(f"Failed to save progress: {str(e)}")
 
 # --------------------------------------------------
 # 4. Utility: Save Annotations per Case
 # --------------------------------------------------
 def save_annotations(case_id: str, annotations: list):
     # Save to Database (PostgreSQL)
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO annotations(case_id, annotations_json) VALUES (%s, %s)",
-        (case_id, json.dumps(annotations))
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO annotations(case_id, annotations_json) VALUES (%s, %s)",
+            (case_id, json.dumps(annotations))
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        st.error(f"Failed to save annotations: {str(e)}")
 
 # --------------------------------------------------
 # 5. Initialize per-workflow Session State
@@ -229,46 +273,55 @@ def init_state(key, default):
 
 # Load user progress from database on first login
 def load_user_progress():
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute(
-        "SELECT last_case_turing, last_case_standard, last_case_ai "
-        "FROM user_progress WHERE username = %s",
-        (username,)
-    )
-    row = c.fetchone()
-    conn.close()
-    if row:
-        st.session_state.last_case_turing  = row[0]
-        st.session_state.last_case_standard = row[1]
-        st.session_state.last_case_ai        = row[2]
-    else:
-        # Initialize to 0 if no record exists
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute(
+            "SELECT last_case_turing, last_case_standard, last_case_ai "
+            "FROM user_progress WHERE username = %s",
+            (username,)
+        )
+        row = c.fetchone()
+        conn.close()
+        if row:
+            st.session_state.last_case_turing  = row[0]
+            st.session_state.last_case_standard = row[1]
+            st.session_state.last_case_ai        = row[2]
+        else:
+            # Initialize to 0 if no record exists
+            st.session_state.last_case_turing  = 0
+            st.session_state.last_case_standard = 0
+            st.session_state.last_case_ai        = 0
+    except Exception as e:
+        st.error(f"Failed to load user progress: {str(e)}")
         st.session_state.last_case_turing  = 0
         st.session_state.last_case_standard = 0
         st.session_state.last_case_ai        = 0
 
 # Save user progress to database whenever updated
 def save_user_progress():
-    conn = get_db_connection()
-    c = conn.cursor()
-    # Use "ON CONFLICT" for PostgreSQL to handle updates
-    c.execute(
-        """
-        INSERT INTO user_progress (username, last_case_turing, last_case_standard, last_case_ai)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (username) DO UPDATE SET
-            last_case_turing = EXCLUDED.last_case_turing,
-            last_case_standard = EXCLUDED.last_case_standard,
-            last_case_ai = EXCLUDED.last_case_ai
-        """,
-        (username,
-         st.session_state.last_case_turing,
-         st.session_state.last_case_standard,
-         st.session_state.last_case_ai)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_db_connection()
+        c = conn.cursor()
+        # Use "ON CONFLICT" for PostgreSQL to handle updates
+        c.execute(
+            """
+            INSERT INTO user_progress (username, last_case_turing, last_case_standard, last_case_ai)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (username) DO UPDATE SET
+                last_case_turing = EXCLUDED.last_case_turing,
+                last_case_standard = EXCLUDED.last_case_standard,
+                last_case_ai = EXCLUDED.last_case_ai
+            """,
+            (username,
+             st.session_state.last_case_turing,
+             st.session_state.last_case_standard,
+             st.session_state.last_case_ai)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        st.error(f"Failed to save user progress: {str(e)}")
 
 # Load user progress exactly once after login
 if 'progress_loaded' not in st.session_state:
@@ -306,19 +359,6 @@ elif "page" not in st.session_state:
 # or replace this logic with actual image serving if they are stored remotely.
 IMAGE_BASE_DIR = r"images_for_ctpa" # A single base directory for all CTPA images
 
-# Ensure the dummy directory exists for the pathing logic to function without error,
-# though actual image presence depends on deployment.
-if not os.path.isdir(IMAGE_BASE_DIR):
-    # This is a placeholder for local testing if you don't have the images
-    # In a real deployment, these directories should exist and contain the images.
-    try:
-        os.makedirs(IMAGE_BASE_DIR, exist_ok=True)
-        # You might also want to create subdirectories like 'case_id/lung' and 'case_id/soft'
-        # for a few example cases to test display_carousel.
-    except Exception as e:
-        st.warning(f"Could not create dummy image base directory: {e}. Image display might fail if images are not present.")
-
-
 # --------------------------------------------------
 # 7. Helpers for Text & Carousel (adjusted to single image base dir)
 # --------------------------------------------------
@@ -334,22 +374,34 @@ def display_carousel(category, case_id):
     lung_folder = os.path.join(IMAGE_BASE_DIR, case_id, "lung")
     soft_folder = os.path.join(IMAGE_BASE_DIR, case_id, "soft")
 
-    lung_imgs = sorted([
-        os.path.join(lung_folder, f)
-        for f in os.listdir(lung_folder)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
-    ]) if os.path.exists(lung_folder) else []
-
-    soft_imgs = sorted([
-        os.path.join(soft_folder, f)
-        for f in os.listdir(soft_folder)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
-    ]) if os.path.exists(soft_folder) else []
+    lung_imgs = []
+    soft_imgs = []
+    
+    # Handle missing directories gracefully
+    try:
+        if os.path.exists(lung_folder):
+            lung_imgs = sorted([
+                os.path.join(lung_folder, f)
+                for f in os.listdir(lung_folder)
+                if f.lower().endswith((".png", ".jpg", ".jpeg"))
+            ])
+    except Exception as e:
+        st.warning(f"Could not load lung images: {str(e)}")
+    
+    try:
+        if os.path.exists(soft_folder):
+            soft_imgs = sorted([
+                os.path.join(soft_folder, f)
+                for f in os.listdir(soft_folder)
+                if f.lower().endswith((".png", ".jpg", ".jpeg"))
+            ])
+    except Exception as e:
+        st.warning(f"Could not load soft tissue images: {str(e)}")
 
     max_slices = max(len(lung_imgs), len(soft_imgs), 1)
     
     if max_slices == 0 and not (lung_imgs or soft_imgs):
-        st.info("No images available for this case in the specified directories.")
+        st.info("No images available for this case.")
         return
 
     # Use a slider to pick the slice index; starts at 0
@@ -456,9 +508,9 @@ def turing_test():
         A, B = gt_report, gen_report
 
     st.subheader(f"Report A ({report_label_A})")
-    st.text_area("A", A, height=400, key=f"A_t_{case}") # Increased height
+    st.text_area("A", A, height=400, key=f"A_t_{case}", label_visibility="collapsed") # Increased height
     st.subheader(f"Report B ({report_label_B})")
-    st.text_area("B", B, height=400, key=f"B_t_{case}") # Increased height
+    st.text_area("B", B, height=400, key=f"B_t_{case}", label_visibility="collapsed") # Increased height
 
     if st.session_state.initial_eval_turing is None:
         choice = st.radio("Which is ground truth?", ["A","B","Not sure"], key=f"ch_t_{case}", index=2)
@@ -546,9 +598,9 @@ def evaluate_case():
         A, B = gt_report, gen_report
 
     st.subheader(f"Report A ({report_label_A})")
-    st.text_area("A", A, height=200, key=f"A_s_{case}")
+    st.text_area("A", A, height=200, key=f"A_s_{case}", label_visibility="collapsed")
     st.subheader(f"Report B ({report_label_B})")
-    st.text_area("B", B, height=200, key=f"B_s_{case}")
+    st.text_area("B", B, height=200, key=f"B_s_{case}", label_visibility="collapsed")
 
     st.markdown("#### Images")
     display_carousel("standard", case)
@@ -614,7 +666,7 @@ def ai_edit():
 
     orig = report_dict.get(case, {}).get("gen", "Original AI report not found in CSV.")
     st.subheader("Original AI Report")
-    st.text_area("orig", orig, height=200, disabled=True)
+    st.text_area("orig", orig, height=200, disabled=True, label_visibility="collapsed")
     st.markdown("#### Images")
     display_carousel("ai", case)
 
@@ -623,7 +675,7 @@ def ai_edit():
 
     if mode == "Free":
         text = st.session_state.assembled_ai or orig
-        new  = st.text_area("Edit", text, height=300, key=f"free_ai_{case}") # Increased height
+        new  = st.text_area("Edit", text, height=300, key=f"free_ai_{case}", label_visibility="collapsed") # Increased height
         st.session_state.assembled_ai = new
     else:
         organ  = st.selectbox("Organ", [""]+["LIVER","PANCREAS","KIDNEY","OTHER"], key=f"org_ai_{case}")
@@ -668,29 +720,49 @@ def view_all_results():
         st.experimental_set_query_params(page="index")
         st.rerun()
 
-    conn = get_db_connection()
+    try:
+        conn = get_db_connection()
 
-    # Sessions
-    df_sessions = pd.read_sql_query(
-        "SELECT DISTINCT session_id, username FROM progress_logs ORDER BY session_id", conn
-    )
-    st.subheader("All Sessions with Saved Progress")
-    st.dataframe(df_sessions)
-
-    # Turing & Standard
-    for cat, label in [
-        ("turing_test", "Turing Test Logs"),
-        ("standard_evaluation", "Standard Eval Logs")
-    ]:
-        st.subheader(label)
-        df = pd.read_sql_query(
-            "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category=%s ORDER BY timestamp",
-            conn, params=(cat,)
+        # Sessions
+        df_sessions = pd.read_sql_query(
+            "SELECT DISTINCT session_id, username FROM progress_logs ORDER BY session_id", conn
         )
-        if not df.empty:
+        st.subheader("All Sessions with Saved Progress")
+        st.dataframe(df_sessions)
+
+        # Turing & Standard
+        for cat, label in [
+            ("turing_test", "Turing Test Logs"),
+            ("standard_evaluation", "Standard Eval Logs")
+        ]:
+            st.subheader(label)
+            df = pd.read_sql_query(
+                "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category=%s ORDER BY timestamp",
+                conn, params=(cat,)
+            )
+            if not df.empty:
+                # Expand the JSON data
+                expanded_data = []
+                for _, row in df.iterrows():
+                    progress = json.loads(row['progress_json'])
+                    progress['session_id'] = row['session_id']
+                    progress['username'] = row['username']
+                    progress['timestamp'] = row['timestamp']
+                    expanded_data.append(progress)
+                
+                st.dataframe(pd.DataFrame(expanded_data))
+            else:
+                st.write("— no entries —")
+
+        # AI Report Edit Logs
+        st.subheader("AI Report Edit Logs")
+        df_ai = pd.read_sql_query(
+            "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category='ai_edit' ORDER BY timestamp", conn
+        )
+        if not df_ai.empty:
             # Expand the JSON data
             expanded_data = []
-            for _, row in df.iterrows():
+            for _, row in df_ai.iterrows():
                 progress = json.loads(row['progress_json'])
                 progress['session_id'] = row['session_id']
                 progress['username'] = row['username']
@@ -699,47 +771,29 @@ def view_all_results():
             
             st.dataframe(pd.DataFrame(expanded_data))
         else:
-            st.write("— no entries —")
-
-    # AI Report Edit Logs
-    st.subheader("AI Report Edit Logs")
-    df_ai = pd.read_sql_query(
-        "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category='ai_edit' ORDER BY timestamp", conn
-    )
-    if not df_ai.empty:
-        # Expand the JSON data
-        expanded_data = []
-        for _, row in df_ai.iterrows():
-            progress = json.loads(row['progress_json'])
-            progress['session_id'] = row['session_id']
-            progress['username'] = row['username']
-            progress['timestamp'] = row['timestamp']
-            expanded_data.append(progress)
+            st.write("— no AI edit logs found —")
         
-        st.dataframe(pd.DataFrame(expanded_data))
-    else:
-        st.write("— no AI edit logs found —")
-    
-    # Annotations Table
-    st.subheader("Annotations Table")
-    df_annotations = pd.read_sql_query(
-        "SELECT case_id, annotations_json, timestamp FROM annotations ORDER BY timestamp", conn
-    )
-    if not df_annotations.empty:
-        # Expand JSON
-        expanded_annotations_data = []
-        for _, row in df_annotations.iterrows():
-            annotations = json.loads(row['annotations_json'])
-            for ann in annotations:
-                ann['case_id'] = row['case_id']
-                ann['timestamp'] = row['timestamp']
-                expanded_annotations_data.append(ann)
-        st.dataframe(pd.DataFrame(expanded_annotations_data))
-    else:
-        st.write("— no annotations found —")
-
-
-    conn.close()
+        # Annotations Table
+        st.subheader("Annotations Table")
+        df_annotations = pd.read_sql_query(
+            "SELECT case_id, annotations_json, timestamp FROM annotations ORDER BY timestamp", conn
+        )
+        if not df_annotations.empty:
+            # Expand JSON
+            expanded_annotations_data = []
+            for _, row in df_annotations.iterrows():
+                annotations = json.loads(row['annotations_json'])
+                for ann in annotations:
+                    ann['case_id'] = row['case_id']
+                    ann['timestamp'] = row['timestamp']
+                    expanded_annotations_data.append(ann)
+            st.dataframe(pd.DataFrame(expanded_annotations_data))
+        else:
+            st.write("— no annotations found —")
+        
+        conn.close()
+    except Exception as e:
+        st.error(f"Failed to load results: {str(e)}")
 
 # --------------------------------------------------
 # 9. Main Router
