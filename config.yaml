@@ -40,6 +40,46 @@ credentials:
       email: tester10@example.com
       name: Test User Ten
       password: "password10" # Replace with a secure password
+    tester11:
+      email: tester11@example.com
+      name: Test User Eleven
+      password: "password11" # Replace with a secure password
+    tester12:
+      email: tester12@example.com
+      name: Test User Twelve
+      password: "password12" # Replace with a secure password
+    tester13:
+      email: tester13@example.com
+      name: Test User Thirteen
+      password: "password13" # Replace with a secure password
+    tester14:
+      email: tester14@example.com
+      name: Test User Fourteen
+      password: "password14" # Replace with a secure password
+    tester15:
+      email: tester15example.com
+      name: Test User Fifteen
+      password: "password15" # Replace with a secure password
+    tester16:
+      email: tester16@example.com
+      name: Test User Sixteen
+      password: "password16" # Replace with a secure password
+    tester17:
+      email: tester17@example.com
+      name: Test User Seventeen
+      password: "password17" # Replace with a secure password
+    tester18:
+      email: tester18@example.com
+      name: Test User Eighteen
+      password: "password18" # Replace with a secure password
+    tester19:
+      email: tester19@example.com
+      name: Test User Nineteen
+      password: "password19" # Replace with a secure password
+    tester20:
+      email: tester20@example.com
+      name: Test User Twenty
+      password: "password20" # Replace with a secure password
 cookie:
   expiry_days: 180
   key: "a_very_secret_key_please_change_it" # IMPORTANT: Change this to a random secret key
