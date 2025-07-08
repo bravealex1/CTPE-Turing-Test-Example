@@ -7,6 +7,7 @@ import pandas as pd
 import sqlite3
 import logging
 from datetime import datetime
+import time  # For performance measurement
 
 import streamlit_authenticator as stauth
 import yaml
@@ -186,7 +187,7 @@ def should_log(session_id: str, category: str, new_progress: dict) -> bool:
         c.execute(
             "SELECT progress_json FROM progress_logs "
             "WHERE session_id=? AND category=? "
-            "ORDER BY timestamp DESC LIMIT 1",
+            "ORDER BY timestamp DESC LIMit 1",
             (session_id, category)
         )
         row = c.fetchone()
@@ -307,6 +308,9 @@ init_state("current_slice_ai", 0)
 init_state("corrections_ai",  [])
 init_state("assembled_ai",    "")
 
+# Initialize image cache
+init_state("image_cache", {})
+
 # --------------------------------------------------
 # Routing
 # --------------------------------------------------
@@ -314,64 +318,79 @@ params = st.experimental_get_query_params()
 st.session_state.page = params.get("page", ["index"])[0]
 
 # --------------------------------------------------
-# Image Handling
+# Image Handling (Optimized)
 # --------------------------------------------------
 def find_case_folder(case_id):
     """Find the folder containing images for a given case ID"""
     try:
-        # Convert case_id to hex format (matching folder names)
-        try:
-            case_id_hex = f"{int(case_id):08x}"  # Convert to 8-digit hex
-        except ValueError:
-            case_id_hex = case_id  # Use as-is if not integer
-            
+        # Directly use case_id without hex conversion
         # Define the directories to search
         search_dirs = ["sampled_normal", "sampled_abnormal"]
         
         for base_dir in search_dirs:
             if not os.path.exists(base_dir):
+                logging.warning(f"Directory not found: {base_dir}")
                 continue
                 
             for folder in os.listdir(base_dir):
-                if folder.startswith(case_id_hex + '_'):
+                # Match folders starting with case_id (case insensitive)
+                if folder.lower().startswith(str(case_id).lower() + '_'):
+                    logging.info(f"Found folder: {folder} for case {case_id}")
                     return os.path.join(base_dir, folder)
-                    
+        
+        logging.warning(f"No folder found for case {case_id}")
         return None
     except Exception as e:
         logging.error(f"find_case_folder failed: {str(e)}")
         return None
 
+def get_cached_images(case_id, category):
+    """Get images from cache or load them"""
+    cache_key = f"{case_id}_{category}"
+    
+    # Return cached images if available
+    if cache_key in st.session_state.image_cache:
+        return st.session_state.image_cache[cache_key]
+    
+    # Find the folder containing images for this case
+    case_folder = find_case_folder(case_id)
+    
+    if not case_folder:
+        return []
+    
+    # Build path to specific image folder (lung or soft)
+    img_folder = os.path.join(case_folder, "lung" if category == "lung" else "soft")
+    
+    if not os.path.exists(img_folder):
+        logging.warning(f"Image folder not found: {img_folder}")
+        return []
+    
+    # Load and cache images
+    try:
+        images = sorted([
+            os.path.join(img_folder, f)
+            for f in os.listdir(img_folder)
+            if f.lower().endswith((".png", ".jpg", ".jpeg"))
+        ])
+        
+        # Cache for future use
+        st.session_state.image_cache[cache_key] = images
+        logging.info(f"Cached {len(images)} images for {cache_key}")
+        return images
+    except Exception as e:
+        logging.error(f"Error loading images: {str(e)}")
+        return []
+
 def display_carousel(category, case_id):
     key = f"current_slice_{category}_{case_id}"
     
     try:
-        # Find the folder containing images for this case
-        case_folder = find_case_folder(case_id)
+        start_time = time.time()
         
-        if not case_folder:
-            st.info("No images available for this case.")
-            return
-            
-        lung_folder = os.path.join(case_folder, "lung")
-        soft_folder = os.path.join(case_folder, "soft")
-
-        lung_imgs = []
-        soft_imgs = []
+        # Get images from cache or load them
+        lung_imgs = get_cached_images(case_id, "lung")
+        soft_imgs = get_cached_images(case_id, "soft")
         
-        if os.path.exists(lung_folder):
-            lung_imgs = sorted([
-                os.path.join(lung_folder, f)
-                for f in os.listdir(lung_folder)
-                if f.lower().endswith((".png", ".jpg", ".jpeg"))
-            ])
-        
-        if os.path.exists(soft_folder):
-            soft_imgs = sorted([
-                os.path.join(soft_folder, f)
-                for f in os.listdir(soft_folder)
-                if f.lower().endswith((".png", ".jpg", ".jpeg"))
-            ])
-
         # Calculate max slices between both image sets
         max_slices = max(len(lung_imgs), len(soft_imgs))
         
@@ -407,6 +426,9 @@ def display_carousel(category, case_id):
                 st.image(soft_imgs[i], caption="Soft Tissue", use_column_width=True)
             else:
                 st.info("No soft-tissue images available.")
+                
+        load_time = time.time() - start_time
+        logging.info(f"Displayed images for case {case_id} in {load_time:.2f} seconds")
     except Exception as e:
         st.warning(f"Could not load images: {str(e)}")
         logging.error(f"display_carousel failed: {str(e)}")
