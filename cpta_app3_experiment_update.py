@@ -30,41 +30,52 @@ logging.basicConfig(
 CTPA_CSV = "CTPA_list_30_remove15_23.csv"
 
 def load_reports():
+    """
+    Loads reports from the CSV, extracts the folder name from the 'acc' column,
+    and builds the report dictionary and case list in a single, efficient pass.
+    """
     try:
-        if os.path.exists(CTPA_CSV):
-            df_reports_csv = pd.read_csv(CTPA_CSV)
-            
-            # Create mapping from ID to folder name
-            folder_mapping = {}
-            for _, row in df_reports_csv.iterrows():
-                # Extract folder name from acc column
-                acc_parts = str(row["acc"]).split()
-                if len(acc_parts) >= 3:
-                    # Get the folder name part (like "003d8f64_20220313")
-                    folder_name = acc_parts[2]
-                    folder_mapping[str(row["id"])] = folder_name
-            
-            report_dict = {
-                str(row["id"]): {
-                    "gt": row["gt"],
-                    "gen": row["parsed_output"],
-                    "folder": folder_mapping.get(str(row["id"]), "")
-                }
-                for _, row in df_reports_csv.iterrows()
-            }
-            
-            cases = sorted([str(case_id) for case_id in df_reports_csv["id"].unique()])
-            total_cases = len(cases)
-            return report_dict, cases, total_cases, folder_mapping
-        else:
+        if not os.path.exists(CTPA_CSV):
             st.error(f"Error: The file {CTPA_CSV} was not found. Please ensure it's uploaded.")
-            return {}, [], 0, {}
+            return {}, [], 0
+
+        df_reports_csv = pd.read_csv(CTPA_CSV)
+        report_dict = {}
+
+        # Process the DataFrame in a single loop
+        for _, row in df_reports_csv.iterrows():
+            case_id = str(row["id"])
+            folder_name = ""
+            
+            # Correctly extract the folder name from the 'acc' column
+            # The folder name is the second part of the string (index 1)
+            acc_parts = str(row.get("acc", "")).split()
+            if len(acc_parts) >= 2:
+                folder_name = acc_parts[1]
+            
+            report_dict[case_id] = {
+                "gt": row["gt"],
+                "gen": row["parsed_output"],
+                "folder": folder_name  # Assign the extracted folder name directly
+            }
+
+        cases = sorted(report_dict.keys())
+        total_cases = len(cases)
+        
+        # The separate folder_mapping dictionary is no longer needed
+        return report_dict, cases, total_cases
+
     except Exception as e:
         st.error(f"Failed to load reports: {str(e)}")
         logging.error(f"Failed to load reports: {str(e)}")
-        return {}, [], 0, {}
+        return {}, [], 0
 
-report_dict, cases, total_cases, folder_mapping = load_reports()
+# Adjust the initial call to match the new return values
+report_dict, cases, total_cases = load_reports()
+
+# The 'folder_mapping' variable is no longer needed throughout the script.
+# The 'display_carousel' function will now correctly get the folder name
+# from the 'report_dict' as it was intended.
 
 # --------------------------------------------------
 # 0. Authentication Setup (Fixed for 20 users)
