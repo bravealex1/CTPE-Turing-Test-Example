@@ -5,7 +5,7 @@ import json
 import uuid
 import random
 import pandas as pd
-import sqlite3  # Changed from psycopg2 to sqlite3
+import psycopg2
 from datetime import datetime
 
 import streamlit_authenticator as stauth
@@ -14,29 +14,27 @@ from yaml.loader import SafeLoader
 from streamlit_authenticator.utilities.hasher import Hasher
 
 # --------------------------------------------------
-# Load Reports from CSV (Combined)
+# Load Reports from CSV (Normal & Abnormal)
 # --------------------------------------------------
-# Path to the combined CSV
-CTPA_CSV = "CTPA_list_30_remove15_23.csv" # Corrected filename from user
+# Paths to the CSVs
+NORMAL_CSV = r"update_normal_top_15.csv"
+ABNORMAL_CSV = r"update_abnormal_top_15.csv"
 
-# Read the CSV
-if os.path.exists(CTPA_CSV):
-    df_reports_csv = pd.read_csv(CTPA_CSV)
+# Read both CSVs and combine
+if os.path.exists(NORMAL_CSV) and os.path.exists(ABNORMAL_CSV):
+    df_normal = pd.read_csv(NORMAL_CSV)
+    df_abnormal = pd.read_csv(ABNORMAL_CSV)
+    df_reports = pd.concat([df_normal, df_abnormal], ignore_index=True)
     # Build a dictionary keyed by case ID
     report_dict = {
-        str(row["id"]): { # Ensure ID is string for consistency
+        str(row["id"]): {
             "gt": row["gt"],
-            "gen": row["parsed_output"] # Assuming 'parsed_output' is the generated report
+            "gen": row["parsed_output"]
         }
-        for _, row in df_reports_csv.iterrows()
+        for _, row in df_reports.iterrows()
     }
-    cases = sorted([str(case_id) for case_id in df_reports_csv["id"].unique()])
-    total_cases = len(cases)
 else:
-    st.error(f"Error: The file {CTPA_CSV} was not found. Please ensure it's uploaded.")
-    report_dict = {}
-    cases = []
-    total_cases = 0
+    report_dict = {}  # fallback if CSVs are missing
 
 # --------------------------------------------------
 # 0. Authentication Setup (must be first) - SIMPLIFIED
@@ -74,11 +72,11 @@ with open("config.yaml", "r", encoding="utf-8") as file:
 
 # Set up Streamlit-Authenticator
 authenticator = stauth.Authenticate(
-    credentials          = config['credentials'],
-    cookie_name          = config['cookie']['name'],
-    key                  = config['cookie']['key'],
-    cookie_expiry_days   = config['cookie']['expiry_days'],
-    preauthorized        = config.get('preauthorized', [])
+    credentials        = config['credentials'],
+    cookie_name        = config['cookie']['name'],
+    key                = config['cookie']['key'],
+    cookie_expiry_days = config['cookie']['expiry_days'],
+    preauthorized      = config.get('preauthorized', [])
 )
 
 # Render login widget in the sidebar
@@ -100,42 +98,40 @@ if not authentication_status:
     st.stop()
 
 # --------------------------------------------------
-# 0. Database Setup for Queryable Logs - SQLITE VERSION
+# 0. Database Setup for Queryable Logs
 # --------------------------------------------------
-DB_DIR  = "logs"
-DB_PATH = os.path.join(DB_DIR, "logs.db")
-
 def get_db_connection():
-    os.makedirs(DB_DIR, exist_ok=True)
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+    # Use Streamlit secrets to get database credentials
+    conn = psycopg2.connect(**st.secrets["postgres"])
+    return conn
 
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
 
-    # 1) Create progress_logs if it doesn't exist (with username column included)
+    # 1) Create progress_logs if it doesn't exist (PostgreSQL syntax)
     c.execute('''
     CREATE TABLE IF NOT EXISTS progress_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       session_id TEXT,
       username TEXT,
       category TEXT,
       progress_json TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )
     ''')
 
-    # 2) Create annotations table
+    # 2) Create annotations table (PostgreSQL syntax)
     c.execute('''
     CREATE TABLE IF NOT EXISTS annotations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       case_id TEXT,
       annotations_json TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     )
     ''')
 
-    # 3) Create user_progress table
+    # 3) Create user_progress table (PostgreSQL syntax)
     c.execute('''
     CREATE TABLE IF NOT EXISTS user_progress (
       username TEXT PRIMARY KEY,
@@ -152,14 +148,14 @@ def init_db():
 init_db()
 
 # --------------------------------------------------
-# Helper: Prevent Duplicate SQLite Inserts
+# Helper: Prevent Duplicate Inserts (PostgreSQL version)
 # --------------------------------------------------
 def should_log(session_id: str, category: str, new_progress: dict) -> bool:
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
         "SELECT progress_json FROM progress_logs "
-        "WHERE session_id=? AND category=? "
+        "WHERE session_id=%s AND category=%s "
         "ORDER BY timestamp DESC LIMIT 1",
         (session_id, category)
     )
@@ -194,12 +190,13 @@ def save_progress(category: str, progress: dict):
     if not should_log(sid, category, progress):
         return
 
-    # Save to SQLite Database
+    # Save to Database (PostgreSQL)
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO progress_logs(session_id, username, category, progress_json) VALUES (?, ?, ?, ?)",
+        "INSERT INTO progress_logs(session_id, username, category, progress_json) VALUES (%s, %s, %s, %s)",
         (sid, username, category, json.dumps(progress))
+    )
     conn.commit()
     conn.close()
 
@@ -207,12 +204,13 @@ def save_progress(category: str, progress: dict):
 # 4. Utility: Save Annotations per Case
 # --------------------------------------------------
 def save_annotations(case_id: str, annotations: list):
-    # Save to SQLite Database
+    # Save to Database (PostgreSQL)
     conn = get_db_connection()
     c = conn.cursor()
     c.execute(
-        "INSERT INTO annotations(case_id, annotations_json) VALUES (?, ?)",
+        "INSERT INTO annotations(case_id, annotations_json) VALUES (%s, %s)",
         (case_id, json.dumps(annotations))
+    )
     conn.commit()
     conn.close()
 
@@ -229,7 +227,7 @@ def load_user_progress():
     c = conn.cursor()
     c.execute(
         "SELECT last_case_turing, last_case_standard, last_case_ai "
-        "FROM user_progress WHERE username = ?",
+        "FROM user_progress WHERE username = %s",
         (username,)
     )
     row = c.fetchone()
@@ -237,22 +235,26 @@ def load_user_progress():
     if row:
         st.session_state.last_case_turing  = row[0]
         st.session_state.last_case_standard = row[1]
-        st.session_state.last_case_ai        = row[2]
+        st.session_state.last_case_ai       = row[2]
     else:
         # Initialize to 0 if no record exists
         st.session_state.last_case_turing  = 0
         st.session_state.last_case_standard = 0
-        st.session_state.last_case_ai        = 0
+        st.session_state.last_case_ai       = 0
 
 # Save user progress to database whenever updated
 def save_user_progress():
     conn = get_db_connection()
     c = conn.cursor()
-    # Use "INSERT OR REPLACE" for SQLite to handle updates
+    # Use "ON CONFLICT" for PostgreSQL to handle updates
     c.execute(
         """
-        INSERT OR REPLACE INTO user_progress (username, last_case_turing, last_case_standard, last_case_ai)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO user_progress (username, last_case_turing, last_case_standard, last_case_ai)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (username) DO UPDATE SET
+            last_case_turing = EXCLUDED.last_case_turing,
+            last_case_standard = EXCLUDED.last_case_standard,
+            last_case_ai = EXCLUDED.last_case_ai
         """,
         (username,
          st.session_state.last_case_turing,
@@ -271,7 +273,7 @@ if 'progress_loaded' not in st.session_state:
 init_state("current_slice_turing", 0)
 init_state("assignments_turing",  {})
 init_state("initial_eval_turing", None)
-init_state("final_eval_turing",    None)
+init_state("final_eval_turing",   None)
 init_state("viewed_images_turing", False)
 
 init_state("current_slice_standard", 0)
@@ -291,40 +293,41 @@ if "page" in params:
 elif "page" not in st.session_state:
     st.session_state.page = "index"
 
-# ── ADAPTED: Dummy folders for image display - actual images will not be loaded from here ──
-# The `display_carousel` function will look for images within these paths
-# but the case IDs are now derived from the CSV, not the file system.
-# You will need to ensure these image paths are correctly populated by your deployment
-# or replace this logic with actual image serving if they are stored remotely.
-IMAGE_BASE_DIR = r"images_for_ctpa" # A single base directory for all CTPA images
+# ── ADAPTED: point to the folders containing normal & abnormal cases ──
+NORMAL_IMAGE_DIR   = r"sampled_normal"
+ABNORMAL_IMAGE_DIR = r"sampled_abnormal"
 
-# Ensure the dummy directory exists for the pathing logic to function without error,
-# though actual image presence depends on deployment.
-if not os.path.isdir(IMAGE_BASE_DIR):
-    # This is a placeholder for local testing if you don't have the images
-    # In a real deployment, these directories should exist and contain the images.
-    try:
-        os.makedirs(IMAGE_BASE_DIR, exist_ok=True)
-        # You might also want to create subdirectories like 'case_id/lung' and 'case_id/soft'
-        # for a few example cases to test display_carousel.
-    except Exception as e:
-        st.warning(f"Could not create dummy image base directory: {e}. Image display might fail if images are not present.")
+# Ensure those directories exist
+if not os.path.isdir(NORMAL_IMAGE_DIR) or not os.path.isdir(ABNORMAL_IMAGE_DIR):
+    st.error(f"Image directories not found: {NORMAL_IMAGE_DIR} / {ABNORMAL_IMAGE_DIR}")
+    st.stop()
 
+# Get list of case IDs from both directories
+cases_normal   = sorted([d for d in os.listdir(NORMAL_IMAGE_DIR)   if os.path.isdir(os.path.join(NORMAL_IMAGE_DIR, d))])
+cases_abnormal = sorted([d for d in os.listdir(ABNORMAL_IMAGE_DIR) if os.path.isdir(os.path.join(ABNORMAL_IMAGE_DIR, d))])
+cases = sorted(cases_normal + cases_abnormal)
+total_cases = len(cases)
 
 # --------------------------------------------------
-# 7. Helpers for Text & Carousel (adjusted to single image base dir)
+# 7. Helpers for Text & Carousel (adjusted folder names)
 # --------------------------------------------------
-# Removed load_text as reports come from CSV
+def load_text(path):
+    return open(path, "r", encoding="utf-8").read() if os.path.exists(path) else ""
+
 def display_carousel(category, case_id):
     """
     Display a slider-based carousel showing only "lung" and "soft tissue" images.
-    Assumes images are structured as IMAGE_BASE_DIR/case_id/lung/*.png and IMAGE_BASE_DIR/case_id/soft/*.png
     """
     key = f"current_slice_{category}_{case_id}"
-    
+    # Determine which base folder this case lives in
+    if case_id in cases_normal:
+        base_dir = NORMAL_IMAGE_DIR
+    else:
+        base_dir = ABNORMAL_IMAGE_DIR
+
     # Define lung & soft tissue folders
-    lung_folder = os.path.join(IMAGE_BASE_DIR, case_id, "lung")
-    soft_folder = os.path.join(IMAGE_BASE_DIR, case_id, "soft")
+    lung_folder = os.path.join(base_dir, case_id, "lung")
+    soft_folder = os.path.join(base_dir, case_id, "soft")
 
     lung_imgs = sorted([
         os.path.join(lung_folder, f)
@@ -339,11 +342,6 @@ def display_carousel(category, case_id):
     ]) if os.path.exists(soft_folder) else []
 
     max_slices = max(len(lung_imgs), len(soft_imgs), 1)
-    
-    if max_slices == 0 and not (lung_imgs or soft_imgs):
-        st.info("No images available for this case in the specified directories.")
-        return
-
     # Use a slider to pick the slice index; starts at 0
     idx = st.slider(
         "Slice index",
@@ -377,7 +375,7 @@ def display_carousel(category, case_id):
 def index():
     st.title("Survey App")
     if total_cases == 0:
-        st.error("No cases found in the provided CSV file.")
+        st.error("No cases found.")
         return
     st.markdown("### Your Progress")
     st.markdown(f"- **Turing Test**: Case {st.session_state.last_case_turing + 1}/{total_cases}")
@@ -414,13 +412,6 @@ def turing_test():
     case = cases[idx]
     st.header(f"Turing Test: {case} ({idx + 1}/{total_cases})")
 
-    st.info("""
-    In this Turing Test, you will evaluate two radiology reports, Report A and Report B.
-    One is a 'Ground-truth' report, which is a clinician's interpretation of the images.
-    The other is an 'AI-generated' report, produced by a large language model.
-    Your task is to determine which report is the original 'Ground-truth' report.
-    """)
-
     if st.button("Save & Back"):
         st.session_state.page = "index"
         st.experimental_set_query_params(page="index")
@@ -428,29 +419,22 @@ def turing_test():
 
     # ── Load reports from the combined dictionary ──
     reports = report_dict.get(case, {})
-    gt_report  = reports.get("gt", "Ground-truth report not found in CSV.")
-    gen_report = reports.get("gen", "Generated report not found in CSV.")
+    gt_report  = reports.get("gt",  load_text(os.path.join(NORMAL_IMAGE_DIR, case, "text.txt")))
+    gen_report = reports.get("gen", load_text(os.path.join(NORMAL_IMAGE_DIR, case, "pred.txt")))
 
     assigns = st.session_state.assignments_turing
     if case not in assigns:
-        assigns[case] = random.choice([True, False]) # True: A=gen, B=gt; False: A=gt, B=gen
+        assigns[case] = random.choice([True, False])
         st.session_state.assignments_turing = assigns
-    
     if assigns[case]:
-        # If assigns[case] is True, Report A is generated, Report B is ground truth
-        report_label_A = "AI-Generated Report"
-        report_label_B = "Ground-truth Report"
         A, B = gen_report, gt_report
     else:
-        # If assigns[case] is False, Report A is ground truth, Report B is generated
-        report_label_A = "Ground-truth Report"
-        report_label_B = "AI-Generated Report"
         A, B = gt_report, gen_report
 
-    st.subheader(f"Report A ({report_label_A})")
-    st.text_area("A", A, height=400, key=f"A_t_{case}", label_visibility="collapsed") # Increased height
-    st.subheader(f"Report B ({report_label_B})")
-    st.text_area("B", B, height=400, key=f"B_t_{case}", label_visibility="collapsed") # Increased height
+    st.subheader("Report A")
+    st.text_area("A", A, height=200, key=f"A_t_{case}")
+    st.subheader("Report B")
+    st.text_area("B", B, height=200, key=f"B_t_{case}")
 
     if st.session_state.initial_eval_turing is None:
         choice = st.radio("Which is ground truth?", ["A","B","Not sure"], key=f"ch_t_{case}", index=2)
@@ -463,29 +447,18 @@ def turing_test():
     if st.session_state.viewed_images_turing:
         st.markdown("#### Images")
         display_carousel("turing", case)
-        st.markdown(f"**Initial Eval (before images):** {st.session_state.initial_eval_turing}")
-        
-        # Simplified "Keep or Update" options
-        final_choice_options = ["Keep current choice", "Change to A", "Change to B", "Change to Not sure"]
-        final_choice_selected = st.radio("Review your choice after viewing images:", final_choice_options, key=f"final_ch_t_{case}")
-
-        final = st.session_state.initial_eval_turing # Default to initial choice
-        if final_choice_selected == "Change to A":
-            final = "A"
-        elif final_choice_selected == "Change to B":
-            final = "B"
-        elif final_choice_selected == "Change to Not sure":
-            final = "Not sure"
-        
+        st.markdown(f"**Initial Eval:** {st.session_state.initial_eval_turing}")
+        up = st.radio("Keep or Update?", ["Keep","Update"], key=f"up_t_{case}")
+        final = st.session_state.initial_eval_turing
+        if up == "Update":
+            final = st.radio("New choice:", ["A","B","Not sure"], key=f"new_t_{case}", index=2)
         st.session_state.final_eval_turing = final
-
-        st.markdown(f"**Final Choice:** {final}") # Display current final choice
 
         if st.button("Finalize & Next"):
             prog = {
                 "case_id": case,
-                "last_case_idx": idx, # Renamed to avoid confusion with last_case in db
-                "assignments": st.session_state.assignments_turing[case], # Only log assignment for current case
+                "last_case": idx,
+                "assignments": st.session_state.assignments_turing,
                 "initial_eval": st.session_state.initial_eval_turing,
                 "final_eval": st.session_state.final_eval_turing,
                 "viewed_images": st.session_state.viewed_images_turing
@@ -495,7 +468,7 @@ def turing_test():
             save_user_progress()  # ADDED: Save progress
             st.session_state.current_slice_turing = 0
             st.session_state.initial_eval_turing = None
-            st.session_state.final_eval_turing    = None
+            st.session_state.final_eval_turing   = None
             st.session_state.viewed_images_turing = False
             st.rerun()
 
@@ -518,29 +491,22 @@ def evaluate_case():
 
     # ── Load reports from the combined dictionary ──
     reports = report_dict.get(case, {})
-    gt_report  = reports.get("gt", "Ground-truth report not found in CSV.")
-    gen_report = reports.get("gen", "Generated report not found in CSV.")
+    gt_report  = reports.get("gt",  load_text(os.path.join(NORMAL_IMAGE_DIR, case, "text.txt")))
+    gen_report = reports.get("gen", load_text(os.path.join(NORMAL_IMAGE_DIR, case, "pred.txt")))
 
     assigns = st.session_state.assignments_standard
     if case not in assigns:
-        assigns[case] = random.choice([True, False]) # True: A=gen, B=gt; False: A=gt, B=gen
+        assigns[case] = random.choice([True, False])
         st.session_state.assignments_standard = assigns
-    
     if assigns[case]:
-        # If assigns[case] is True, Report A is generated, Report B is ground truth
-        report_label_A = "AI-Generated Report"
-        report_label_B = "Ground-truth Report"
         A, B = gen_report, gt_report
     else:
-        # If assigns[case] is False, Report A is ground truth, Report B is generated
-        report_label_A = "Ground-truth Report"
-        report_label_B = "AI-Generated Report"
         A, B = gt_report, gen_report
 
-    st.subheader(f"Report A ({report_label_A})")
-    st.text_area("A", A, height=200, key=f"A_s_{case}", label_visibility="collapsed")
-    st.subheader(f"Report B ({report_label_B})")
-    st.text_area("B", B, height=200, key=f"B_s_{case}", label_visibility="collapsed")
+    st.subheader("Report A")
+    st.text_area("A", A, height=150, key=f"A_s_{case}")
+    st.subheader("Report B")
+    st.text_area("B", B, height=150, key=f"B_s_{case}")
 
     st.markdown("#### Images")
     display_carousel("standard", case)
@@ -562,13 +528,12 @@ def evaluate_case():
     choice = st.radio("Best report?", ["A","B","Corrected","Equal"], key=f"ch_s_{case}")
     if st.button("Submit & Next"):
         if cors:
-            save_annotations(case, cors) # Save specific corrections to annotations table
+            save_annotations(case, cors)
         prog = {
             "case_id": case,
-            "last_case_idx": idx, # Renamed
-            "assignments": st.session_state.assignments_standard[case], # Log current case assignment
-            "evaluation_choice": choice, # Log the choice
-            "corrections_made": cors # Log the corrections that were added for this case
+            "last_case": idx,
+            "assignments": st.session_state.assignments_standard,
+            "corrections": st.session_state.corrections_standard
         }
         save_progress("standard_evaluation", prog)
         st.session_state.corrections_standard = [
@@ -594,19 +559,19 @@ def ai_edit():
     if st.button("Save & Back"):
         prog = {
             "case_id": case,
-            "last_case_idx": idx, # Renamed
             "mode": st.session_state.get("last_mode_ai", "Free"),
-            "assembled_report": st.session_state.assembled_ai, # Renamed
-            "corrections_applied": st.session_state.corrections_ai # Renamed
+            "assembled": st.session_state.assembled_ai,
+            "corrections": st.session_state.corrections_ai
         }
         save_progress("ai_edit", prog)
         st.session_state.page = "index"
         st.experimental_set_query_params(page="index")
         st.rerun()
 
-    orig = report_dict.get(case, {}).get("gen", "Original AI report not found in CSV.")
+    orig = report_dict.get(case, {}).get("gen",
+           load_text(os.path.join(NORMAL_IMAGE_DIR, case, "pred.txt")))
     st.subheader("Original AI Report")
-    st.text_area("orig", orig, height=200, disabled=True, label_visibility="collapsed")
+    st.text_area("orig", orig, height=150, disabled=True)
     st.markdown("#### Images")
     display_carousel("ai", case)
 
@@ -615,7 +580,7 @@ def ai_edit():
 
     if mode == "Free":
         text = st.session_state.assembled_ai or orig
-        new  = st.text_area("Edit", text, height=300, key=f"free_ai_{case}", label_visibility="collapsed") # Increased height
+        new  = st.text_area("Edit", text, height=200, key=f"free_ai_{case}")
         st.session_state.assembled_ai = new
     else:
         organ  = st.selectbox("Organ", [""]+["LIVER","PANCREAS","KIDNEY","OTHER"], key=f"org_ai_{case}")
@@ -631,7 +596,7 @@ def ai_edit():
         cors = [c for c in st.session_state.corrections_ai if c["case_id"] == case]
         if cors:
             st.table(pd.DataFrame(cors).drop(columns=["case_id"]))
-            if st.button("Assemble into Report"): # Changed button text
+            if st.button("Assemble"):
                 txt = "\n".join(f"- {c['organ']}: {c['reason']} — {c['details']}" for c in cors)
                 st.session_state.assembled_ai = txt
                 st.success("Assembled")
@@ -640,14 +605,13 @@ def ai_edit():
     if st.button("Submit & Next"):
         prog = {
             "case_id": case,
-            "last_case_idx": idx, # Renamed
             "mode": mode,
-            "final_report_content": st.session_state.assembled_ai, # Renamed
-            "corrections_applied": st.session_state.corrections_ai
+            "assembled": st.session_state.assembled_ai,
+            "corrections": st.session_state.corrections_ai
         }
         save_progress("ai_edit", prog)
         st.session_state.corrections_ai = [c for c in st.session_state.corrections_ai if c["case_id"] != case]
-        st.session_state.assembled_ai = "" # Clear for next case
+        st.session_state.assembled_ai = ""
         st.session_state.last_case_ai += 1
         save_user_progress()  # ADDED: Save progress
         st.session_state.current_slice_ai = 0
@@ -676,7 +640,7 @@ def view_all_results():
     ]:
         st.subheader(label)
         df = pd.read_sql_query(
-            "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category=? ORDER BY timestamp",
+            "SELECT session_id, username, progress_json, timestamp FROM progress_logs WHERE category=%s ORDER BY timestamp",
             conn, params=(cat,)
         )
         if not df.empty:
@@ -711,24 +675,6 @@ def view_all_results():
         st.dataframe(pd.DataFrame(expanded_data))
     else:
         st.write("— no AI edit logs found —")
-    
-    # Annotations Table
-    st.subheader("Annotations Table")
-    df_annotations = pd.read_sql_query(
-        "SELECT case_id, annotations_json, timestamp FROM annotations ORDER BY timestamp", conn
-    )
-    if not df_annotations.empty:
-        # Expand JSON
-        expanded_annotations_data = []
-        for _, row in df_annotations.iterrows():
-            annotations = json.loads(row['annotations_json'])
-            for ann in annotations:
-                ann['case_id'] = row['case_id']
-                ann['timestamp'] = row['timestamp']
-                expanded_annotations_data.append(ann)
-        st.dataframe(pd.DataFrame(expanded_annotations_data))
-    else:
-        st.write("— no annotations found —")
 
     conn.close()
 
