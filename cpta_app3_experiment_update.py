@@ -7,7 +7,8 @@ import pandas as pd
 import sqlite3
 import logging
 from datetime import datetime
-import time  # For performance measurement
+import time
+import re  # For extracting folder names
 
 import streamlit_authenticator as stauth
 import yaml
@@ -15,13 +16,16 @@ from yaml.loader import SafeLoader
 from streamlit_authenticator.utilities.hasher import Hasher
 
 # --------------------------------------------------
-# Configure logging
+# Configure logging - more detailed
 # --------------------------------------------------
-logging.basicConfig(filename='app_errors.log', level=logging.INFO,  # Changed to INFO for better debugging
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    filename='app_errors.log', 
+    level=logging.INFO,  # Changed to INFO for better debugging
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 # --------------------------------------------------
-# Load Reports from CSV (Combined)
+# Load Reports from CSV with folder mapping
 # --------------------------------------------------
 CTPA_CSV = "CTPA_list_30_remove15_23.csv"
 
@@ -29,25 +33,38 @@ def load_reports():
     try:
         if os.path.exists(CTPA_CSV):
             df_reports_csv = pd.read_csv(CTPA_CSV)
+            
+            # Create mapping from ID to folder name
+            folder_mapping = {}
+            for _, row in df_reports_csv.iterrows():
+                # Extract folder name from acc column
+                acc_parts = str(row["acc"]).split()
+                if len(acc_parts) >= 3:
+                    # Get the folder name part (like "003d8f64_20220313")
+                    folder_name = acc_parts[2]
+                    folder_mapping[str(row["id"])] = folder_name
+            
             report_dict = {
                 str(row["id"]): {
                     "gt": row["gt"],
-                    "gen": row["parsed_output"]
+                    "gen": row["parsed_output"],
+                    "folder": folder_mapping.get(str(row["id"]), "")
                 }
                 for _, row in df_reports_csv.iterrows()
             }
+            
             cases = sorted([str(case_id) for case_id in df_reports_csv["id"].unique()])
             total_cases = len(cases)
-            return report_dict, cases, total_cases
+            return report_dict, cases, total_cases, folder_mapping
         else:
             st.error(f"Error: The file {CTPA_CSV} was not found. Please ensure it's uploaded.")
-            return {}, [], 0
+            return {}, [], 0, {}
     except Exception as e:
         st.error(f"Failed to load reports: {str(e)}")
         logging.error(f"Failed to load reports: {str(e)}")
-        return {}, [], 0
+        return {}, [], 0, {}
 
-report_dict, cases, total_cases = load_reports()
+report_dict, cases, total_cases, folder_mapping = load_reports()
 
 # --------------------------------------------------
 # 0. Authentication Setup (Fixed for 20 users)
@@ -318,39 +335,44 @@ params = st.experimental_get_query_params()
 st.session_state.page = params.get("page", ["index"])[0]
 
 # --------------------------------------------------
-# Image Handling (Optimized with detailed logging)
+# Image Handling - Fixed based on CSV structure
 # --------------------------------------------------
-def find_case_folder(case_id):
-    """Find the folder containing images for a given case ID"""
+def find_case_folder(folder_name):
+    """Find the folder containing images for a given folder name"""
     try:
-        # Directly use case_id without hex conversion
-        logging.info(f"Searching for case: {case_id}")
-        
         # Define the directories to search
         search_dirs = ["sampled_normal", "sampled_abnormal"]
         
+        # Get current working directory for debugging
+        cwd = os.getcwd()
+        logging.info(f"Current working directory: {cwd}")
+        
         for base_dir in search_dirs:
-            if not os.path.exists(base_dir):
-                logging.warning(f"Directory not found: {base_dir}")
+            abs_base_dir = os.path.abspath(base_dir)
+            logging.info(f"Checking directory: {abs_base_dir}")
+            
+            if not os.path.exists(abs_base_dir):
+                logging.warning(f"Directory not found: {abs_base_dir}")
                 continue
                 
-            logging.info(f"Searching in: {base_dir}")
-            for folder in os.listdir(base_dir):
-                # Match folders starting with case_id (case insensitive)
-                if folder.lower().startswith(str(case_id).lower() + '_'):
-                    logging.info(f"Found folder: {folder} for case {case_id}")
-                    return os.path.join(base_dir, folder)
+            logging.info(f"Searching in: {abs_base_dir}")
+            for folder in os.listdir(abs_base_dir):
+                # Check for exact folder name match
+                if folder == folder_name:
+                    found_path = os.path.join(abs_base_dir, folder)
+                    logging.info(f"Found matching folder: {found_path}")
+                    return found_path
         
-        logging.warning(f"No folder found for case {case_id}")
+        logging.warning(f"No folder found for: {folder_name}")
         return None
     except Exception as e:
         logging.error(f"find_case_folder failed: {str(e)}")
         return None
 
 def get_images_from_folder(folder_path):
-    """Get sorted image paths from a folder"""
+    """Get sorted image paths from a folder with detailed logging"""
     if not os.path.exists(folder_path):
-        logging.warning(f"Folder not found: {folder_path}")
+        logging.warning(f"Image folder not found: {folder_path}")
         return []
     
     images = []
@@ -360,11 +382,8 @@ def get_images_from_folder(folder_path):
                 img_path = os.path.join(folder_path, f)
                 images.append(img_path)
         
-        # Sort by filename (numerically if possible)
-        try:
-            images.sort(key=lambda x: [int(c) if c.isdigit() else c for c in os.path.basename(x).split('.')[0].split('_')])
-        except:
-            images.sort()
+        # Sort by filename
+        images.sort()
             
         logging.info(f"Found {len(images)} images in {folder_path}")
         return images
@@ -377,18 +396,27 @@ def display_carousel(category, case_id):
     
     try:
         start_time = time.time()
+        
+        # Get the folder name from report_dict
+        folder_name = report_dict.get(case_id, {}).get("folder", "")
+        if not folder_name:
+            st.info("No folder mapping for this case.")
+            logging.warning(f"No folder mapping for case: {case_id}")
+            return
+            
+        # Check if we have cached this case
         cache_key = f"{case_id}_{category}"
         
-        # Check if we have cached this case
         if cache_key in st.session_state.image_cache:
             lung_imgs, soft_imgs = st.session_state.image_cache[cache_key]
             logging.info(f"Using cached images for {case_id}")
         else:
             # Find the folder containing images for this case
-            case_folder = find_case_folder(case_id)
+            case_folder = find_case_folder(folder_name)
             
             if not case_folder:
                 st.info("No images available for this case.")
+                logging.warning(f"Case folder not found for: {folder_name}")
                 return
                 
             # Get lung and soft tissue images
