@@ -17,7 +17,7 @@ from streamlit_authenticator.utilities.hasher import Hasher
 # --------------------------------------------------
 # Configure logging
 # --------------------------------------------------
-logging.basicConfig(filename='app_errors.log', level=logging.ERROR, 
+logging.basicConfig(filename='app_errors.log', level=logging.INFO,  # Changed to INFO for better debugging
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --------------------------------------------------
@@ -187,7 +187,7 @@ def should_log(session_id: str, category: str, new_progress: dict) -> bool:
         c.execute(
             "SELECT progress_json FROM progress_logs "
             "WHERE session_id=? AND category=? "
-            "ORDER BY timestamp DESC LIMit 1",
+            "ORDER BY timestamp DESC LIMIT 1",
             (session_id, category)
         )
         row = c.fetchone()
@@ -318,12 +318,14 @@ params = st.experimental_get_query_params()
 st.session_state.page = params.get("page", ["index"])[0]
 
 # --------------------------------------------------
-# Image Handling (Optimized)
+# Image Handling (Optimized with detailed logging)
 # --------------------------------------------------
 def find_case_folder(case_id):
     """Find the folder containing images for a given case ID"""
     try:
         # Directly use case_id without hex conversion
+        logging.info(f"Searching for case: {case_id}")
+        
         # Define the directories to search
         search_dirs = ["sampled_normal", "sampled_abnormal"]
         
@@ -332,6 +334,7 @@ def find_case_folder(case_id):
                 logging.warning(f"Directory not found: {base_dir}")
                 continue
                 
+            logging.info(f"Searching in: {base_dir}")
             for folder in os.listdir(base_dir):
                 # Match folders starting with case_id (case insensitive)
                 if folder.lower().startswith(str(case_id).lower() + '_'):
@@ -344,41 +347,29 @@ def find_case_folder(case_id):
         logging.error(f"find_case_folder failed: {str(e)}")
         return None
 
-def get_cached_images(case_id, category):
-    """Get images from cache or load them"""
-    cache_key = f"{case_id}_{category}"
-    
-    # Return cached images if available
-    if cache_key in st.session_state.image_cache:
-        return st.session_state.image_cache[cache_key]
-    
-    # Find the folder containing images for this case
-    case_folder = find_case_folder(case_id)
-    
-    if not case_folder:
+def get_images_from_folder(folder_path):
+    """Get sorted image paths from a folder"""
+    if not os.path.exists(folder_path):
+        logging.warning(f"Folder not found: {folder_path}")
         return []
     
-    # Build path to specific image folder (lung or soft)
-    img_folder = os.path.join(case_folder, "lung" if category == "lung" else "soft")
-    
-    if not os.path.exists(img_folder):
-        logging.warning(f"Image folder not found: {img_folder}")
-        return []
-    
-    # Load and cache images
+    images = []
     try:
-        images = sorted([
-            os.path.join(img_folder, f)
-            for f in os.listdir(img_folder)
-            if f.lower().endswith((".png", ".jpg", ".jpeg"))
-        ])
+        for f in os.listdir(folder_path):
+            if f.lower().endswith((".png", ".jpg", ".jpeg")):
+                img_path = os.path.join(folder_path, f)
+                images.append(img_path)
         
-        # Cache for future use
-        st.session_state.image_cache[cache_key] = images
-        logging.info(f"Cached {len(images)} images for {cache_key}")
+        # Sort by filename (numerically if possible)
+        try:
+            images.sort(key=lambda x: [int(c) if c.isdigit() else c for c in os.path.basename(x).split('.')[0].split('_')])
+        except:
+            images.sort()
+            
+        logging.info(f"Found {len(images)} images in {folder_path}")
         return images
     except Exception as e:
-        logging.error(f"Error loading images: {str(e)}")
+        logging.error(f"Error loading images from {folder_path}: {str(e)}")
         return []
 
 def display_carousel(category, case_id):
@@ -386,13 +377,32 @@ def display_carousel(category, case_id):
     
     try:
         start_time = time.time()
+        cache_key = f"{case_id}_{category}"
         
-        # Get images from cache or load them
-        lung_imgs = get_cached_images(case_id, "lung")
-        soft_imgs = get_cached_images(case_id, "soft")
+        # Check if we have cached this case
+        if cache_key in st.session_state.image_cache:
+            lung_imgs, soft_imgs = st.session_state.image_cache[cache_key]
+            logging.info(f"Using cached images for {case_id}")
+        else:
+            # Find the folder containing images for this case
+            case_folder = find_case_folder(case_id)
+            
+            if not case_folder:
+                st.info("No images available for this case.")
+                return
+                
+            # Get lung and soft tissue images
+            lung_folder = os.path.join(case_folder, "lung")
+            soft_folder = os.path.join(case_folder, "soft")
+            
+            lung_imgs = get_images_from_folder(lung_folder)
+            soft_imgs = get_images_from_folder(soft_folder)
+            
+            # Cache for future use
+            st.session_state.image_cache[cache_key] = (lung_imgs, soft_imgs)
         
         # Calculate max slices between both image sets
-        max_slices = max(len(lung_imgs), len(soft_imgs))
+        max_slices = max(len(lung_imgs), len(soft_imgs), 1)
         
         if max_slices == 0:
             st.info("No images available for this case.")
@@ -434,7 +444,7 @@ def display_carousel(category, case_id):
         logging.error(f"display_carousel failed: {str(e)}")
 
 # --------------------------------------------------
-# Page Definitions
+# Page Definitions (unchanged)
 # --------------------------------------------------
 def index():
     st.title("Survey App")
