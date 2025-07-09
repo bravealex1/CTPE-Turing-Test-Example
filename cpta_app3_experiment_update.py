@@ -16,69 +16,59 @@ from yaml.loader import SafeLoader
 from streamlit_authenticator.utilities.hasher import Hasher
 
 # --------------------------------------------------
-# Configure logging - more detailed
+# Configure logging
 # --------------------------------------------------
 logging.basicConfig(
-    filename='app_errors.log', 
-    level=logging.INFO,  # Changed to INFO for better debugging
+    filename='app_errors.log',
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
 # --------------------------------------------------
-# Load Reports from CSV with folder mapping
+# Load Reports from CSV (Corrected)
 # --------------------------------------------------
 CTPA_CSV = "CTPA_list_30_remove15_23.csv"
 
 def load_reports():
     """
-    Loads reports from the CSV, extracts the folder name from the 'acc' column,
-    and builds the report dictionary and case list in a single, efficient pass.
+    Loads reports from the CSV, using the 'id' column as the folder name,
+    and builds the report dictionary and case list.
     """
     try:
         if not os.path.exists(CTPA_CSV):
-            st.error(f"Error: The file {CTPA_CSV} was not found. Please ensure it's uploaded.")
+            st.error(f"Error: The file {CTPA_CSV} was not found. Please ensure it's in the correct directory.")
             return {}, [], 0
 
         df_reports_csv = pd.read_csv(CTPA_CSV)
         report_dict = {}
 
-        # Process the DataFrame in a single loop
+        # Process the DataFrame
         for _, row in df_reports_csv.iterrows():
+            # The 'id' column directly corresponds to the folder name, as per the requirement.
             case_id = str(row["id"])
-            folder_name = ""
-            
-            # Correctly extract the folder name from the 'acc' column
-            # The folder name is the second part of the string (index 1)
-            acc_parts = str(row.get("acc", "")).split()
-            if len(acc_parts) >= 2:
-                folder_name = acc_parts[1]
+            folder_name = case_id
             
             report_dict[case_id] = {
                 "gt": row["gt"],
                 "gen": row["parsed_output"],
-                "folder": folder_name  # Assign the extracted folder name directly
+                "folder": folder_name  # Use the 'id' as the folder name
             }
 
         cases = sorted(report_dict.keys())
         total_cases = len(cases)
         
-        # The separate folder_mapping dictionary is no longer needed
         return report_dict, cases, total_cases
 
     except Exception as e:
-        st.error(f"Failed to load reports: {str(e)}")
+        st.error(f"Failed to load or process the CSV report file: {str(e)}")
         logging.error(f"Failed to load reports: {str(e)}")
         return {}, [], 0
 
-# Adjust the initial call to match the new return values
+# Load the reports using the corrected function
 report_dict, cases, total_cases = load_reports()
 
-# The 'folder_mapping' variable is no longer needed throughout the script.
-# The 'display_carousel' function will now correctly get the folder name
-# from the 'report_dict' as it was intended.
-
 # --------------------------------------------------
-# 0. Authentication Setup (Fixed for 20 users)
+# 0. Authentication Setup
 # --------------------------------------------------
 def setup_authentication():
     try:
@@ -115,11 +105,11 @@ def setup_authentication():
             config = yaml.load(file, Loader=SafeLoader)
 
         return stauth.Authenticate(
-            credentials          = config['credentials'],
-            cookie_name          = config['cookie']['name'],
-            key                  = config['cookie']['key'],
-            cookie_expiry_days   = config['cookie']['expiry_days'],
-            preauthorized        = config.get('preauthorized', [])
+            credentials=config['credentials'],
+            cookie_name=config['cookie']['name'],
+            key=config['cookie']['key'],
+            cookie_expiry_days=config['cookie']['expiry_days'],
+            preauthorized=config.get('preauthorized', [])
         )
     except Exception as e:
         st.error(f"Authentication setup failed: {str(e)}")
@@ -129,9 +119,9 @@ def setup_authentication():
 authenticator = setup_authentication()
 authenticator.login(location="sidebar", key="login")
 
-name                  = st.session_state.get("name")
+name = st.session_state.get("name")
 authentication_status = st.session_state.get("authentication_status")
-username              = st.session_state.get("username")
+username = st.session_state.get("username")
 
 if authentication_status:
     authenticator.logout('Logout', 'sidebar', key='logout_button')
@@ -144,7 +134,7 @@ if not authentication_status:
     st.stop()
 
 # --------------------------------------------------
-# Database Setup - SQLite ONLY
+# Database Setup
 # --------------------------------------------------
 DB_DIR = "logs"
 DB_PATH = os.path.join(DB_DIR, "logs.db")
@@ -163,7 +153,6 @@ def init_db():
         conn = get_db_connection()
         c = conn.cursor()
         
-        # Create tables if they don't exist
         c.execute('''
         CREATE TABLE IF NOT EXISTS progress_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -174,7 +163,6 @@ def init_db():
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )''')
         
-        # Add username column if it doesn't exist
         c.execute("PRAGMA table_info(progress_logs)")
         columns = [col[1] for col in c.fetchall()]
         if 'username' not in columns:
@@ -325,7 +313,7 @@ if 'progress_loaded' not in st.session_state:
 init_state("current_slice_turing", 0)
 init_state("assignments_turing",  {})
 init_state("initial_eval_turing", None)
-init_state("final_eval_turing",    None)
+init_state("final_eval_turing",   None)
 init_state("viewed_images_turing", False)
 
 init_state("current_slice_standard", 0)
@@ -336,7 +324,6 @@ init_state("current_slice_ai", 0)
 init_state("corrections_ai",  [])
 init_state("assembled_ai",    "")
 
-# Initialize image cache
 init_state("image_cache", {})
 
 # --------------------------------------------------
@@ -346,35 +333,25 @@ params = st.experimental_get_query_params()
 st.session_state.page = params.get("page", ["index"])[0]
 
 # --------------------------------------------------
-# Image Handling - Fixed based on CSV structure
+# Image Handling
 # --------------------------------------------------
 def find_case_folder(folder_name):
     """Find the folder containing images for a given folder name"""
     try:
-        # Define the directories to search
         search_dirs = ["sampled_normal", "sampled_abnormal"]
-        
-        # Get current working directory for debugging
-        cwd = os.getcwd()
-        logging.info(f"Current working directory: {cwd}")
-        
         for base_dir in search_dirs:
-            abs_base_dir = os.path.abspath(base_dir)
-            logging.info(f"Checking directory: {abs_base_dir}")
-            
-            if not os.path.exists(abs_base_dir):
-                logging.warning(f"Directory not found: {abs_base_dir}")
+            # Check if base directory exists
+            if not os.path.isdir(base_dir):
+                logging.warning(f"Search directory not found: {os.path.abspath(base_dir)}")
                 continue
+
+            # Construct path to the specific case folder
+            case_path = os.path.join(base_dir, folder_name)
+            if os.path.isdir(case_path):
+                logging.info(f"Found matching folder: {case_path}")
+                return case_path
                 
-            logging.info(f"Searching in: {abs_base_dir}")
-            for folder in os.listdir(abs_base_dir):
-                # Check for exact folder name match
-                if folder == folder_name:
-                    found_path = os.path.join(abs_base_dir, folder)
-                    logging.info(f"Found matching folder: {found_path}")
-                    return found_path
-        
-        logging.warning(f"No folder found for: {folder_name}")
+        logging.warning(f"No folder found for: {folder_name} in directories {search_dirs}")
         return None
     except Exception as e:
         logging.error(f"find_case_folder failed: {str(e)}")
@@ -388,14 +365,11 @@ def get_images_from_folder(folder_path):
     
     images = []
     try:
-        for f in os.listdir(folder_path):
+        for f in sorted(os.listdir(folder_path)):
             if f.lower().endswith((".png", ".jpg", ".jpeg")):
                 img_path = os.path.join(folder_path, f)
                 images.append(img_path)
         
-        # Sort by filename
-        images.sort()
-            
         logging.info(f"Found {len(images)} images in {folder_path}")
         return images
     except Exception as e:
@@ -403,87 +377,97 @@ def get_images_from_folder(folder_path):
         return []
 
 def display_carousel(category, case_id):
-    key = f"current_slice_{category}_{case_id}"
-    
+    """
+    Displays a side-by-side image carousel for lung and soft tissue scans
+    with a slider and navigation buttons.
+    """
+    # Key for storing the current slice index for a given category (turing, standard, ai)
+    slice_state_key = f"current_slice_{category}"
+
     try:
-        start_time = time.time()
-        
-        # Get the folder name from report_dict
         folder_name = report_dict.get(case_id, {}).get("folder", "")
         if not folder_name:
             st.info("No folder mapping for this case.")
             logging.warning(f"No folder mapping for case: {case_id}")
             return
             
-        # Check if we have cached this case
         cache_key = f"{case_id}_{category}"
-        
         if cache_key in st.session_state.image_cache:
             lung_imgs, soft_imgs = st.session_state.image_cache[cache_key]
-            logging.info(f"Using cached images for {case_id}")
         else:
-            # Find the folder containing images for this case
             case_folder = find_case_folder(folder_name)
-            
             if not case_folder:
-                st.info("No images available for this case.")
+                st.warning(f"Image folder '{folder_name}' not found. Check that the 'sampled_abnormal' and 'sampled_normal' directories are present.")
                 logging.warning(f"Case folder not found for: {folder_name}")
                 return
-                
-            # Get lung and soft tissue images
+            
             lung_folder = os.path.join(case_folder, "lung")
             soft_folder = os.path.join(case_folder, "soft")
-            
             lung_imgs = get_images_from_folder(lung_folder)
             soft_imgs = get_images_from_folder(soft_folder)
-            
-            # Cache for future use
             st.session_state.image_cache[cache_key] = (lung_imgs, soft_imgs)
         
-        # Calculate max slices between both image sets
-        max_slices = max(len(lung_imgs), len(soft_imgs), 1)
-        
-        if max_slices == 0:
-            st.info("No images available for this case.")
+        num_slices = max(len(lung_imgs), len(soft_imgs))
+        if num_slices == 0:
+            st.info("No images are available for this case.")
             return
-            
-        # Only show slider if there are multiple slices
-        if max_slices > 1:
-            idx = st.slider(
-                "Slice index",
-                0,
-                max_slices - 1,
-                st.session_state.get(key, 0),
-                key=key
-            )
-        else:
-            idx = 0
 
+        idx = st.session_state.get(slice_state_key, 0)
+        if idx >= num_slices: # Reset if index is out of bounds for the new case
+            idx = 0
+            st.session_state[slice_state_key] = 0
+
+        # --- UI for Image Navigation ---
+        new_idx = st.slider(
+            f"Slice ({idx + 1}/{num_slices})",
+            min_value=0,
+            max_value=num_slices - 1,
+            value=idx,
+            key=f"slider_{category}_{case_id}"
+        )
+        if new_idx != idx:
+            st.session_state[slice_state_key] = new_idx
+            st.rerun()
+
+        col1, col2, _ = st.columns([1, 1, 8])
+        with col1:
+            if st.button("⬅️ Left", key=f"left_{category}_{case_id}", use_container_width=True):
+                if st.session_state[slice_state_key] > 0:
+                    st.session_state[slice_state_key] -= 1
+                    st.rerun()
+        with col2:
+            if st.button("Right ➡️", key=f"right_{category}_{case_id}", use_container_width=True):
+                if st.session_state[slice_state_key] < num_slices - 1:
+                    st.session_state[slice_state_key] += 1
+                    st.rerun()
+        
+        st.markdown("---")
+        
+        # --- Display Images ---
+        current_index = st.session_state[slice_state_key]
         c1, c2 = st.columns(2)
         with c1:
+            st.caption("Lung")
             if lung_imgs:
-                # If idx >= len(lung_imgs), show the last available image
-                i = min(idx, len(lung_imgs) - 1)
-                st.image(lung_imgs[i], caption="Lung", use_column_width=True)
+                img_index = min(current_index, len(lung_imgs) - 1)
+                st.image(lung_imgs[img_index], use_container_width=True)
             else:
                 st.info("No lung images available.")
 
         with c2:
+            st.caption("Soft Tissue")
             if soft_imgs:
-                # If idx >= len(soft_imgs), show the last available image
-                i = min(idx, len(soft_imgs) - 1)
-                st.image(soft_imgs[i], caption="Soft Tissue", use_column_width=True)
+                img_index = min(current_index, len(soft_imgs) - 1)
+                st.image(soft_imgs[img_index], use_container_width=True)
             else:
                 st.info("No soft-tissue images available.")
-                
-        load_time = time.time() - start_time
-        logging.info(f"Displayed images for case {case_id} in {load_time:.2f} seconds")
+
     except Exception as e:
-        st.warning(f"Could not load images: {str(e)}")
-        logging.error(f"display_carousel failed: {str(e)}")
+        st.error(f"Could not display images: {e}")
+        logging.error(f"display_carousel failed for case {case_id}: {e}", exc_info=True)
 
 # --------------------------------------------------
-# Page Definitions (unchanged)
+# Page Definitions
 # --------------------------------------------------
 def index():
     st.title("Survey App")
@@ -541,19 +525,14 @@ def turing_test():
         gt_report = reports.get("gt", "Ground-truth report not found.")
         gen_report = reports.get("gen", "Generated report not found.")
 
-        # Random assignment: 50/50 chance for each configuration
         assigns = st.session_state.assignments_turing
         if case not in assigns:
-            # True: A is AI-generated, B is ground truth
-            # False: A is ground truth, B is AI-generated
             assigns[case] = random.choice([True, False])
             st.session_state.assignments_turing = assigns
         
         if assigns[case]:
-            # Report A is generated, Report B is ground truth
             A, B = gen_report, gt_report
         else:
-            # Report A is ground truth, Report B is generated
             A, B = gt_report, gen_report
 
         st.subheader("Report A")
@@ -599,6 +578,7 @@ def turing_test():
                 })
                 st.session_state.last_case_turing += 1
                 save_user_progress()
+                # Reset for next case
                 st.session_state.initial_eval_turing = None
                 st.session_state.final_eval_turing = None
                 st.session_state.viewed_images_turing = False
@@ -631,11 +611,8 @@ def evaluate_case():
         gt_report = reports.get("gt", "Ground-truth report not found.")
         gen_report = reports.get("gen", "Generated report not found.")
 
-        # Random assignment: 50/50 chance for each configuration
         assigns = st.session_state.assignments_standard
         if case not in assigns:
-            # True: A is AI-generated, B is ground truth
-            # False: A is ground truth, B is AI-generated
             assigns[case] = random.choice([True, False])
             st.session_state.assignments_standard = assigns
         
