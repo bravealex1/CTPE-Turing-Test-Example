@@ -50,7 +50,7 @@ def load_reports():
             
             report_dict[case_id] = {
                 "gt": row["gt"],
-                "gen": row["parsed_output"],
+                "gen": row["Dr. Bai Edit"],
                 "folder": folder_name  # Use the 'id' as the folder name
             }
 
